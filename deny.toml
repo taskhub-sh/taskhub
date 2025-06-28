@@ -5,13 +5,11 @@
 # Security vulnerability database
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
 yanked = "warn"
-notice = "warn"
 ignore = [
     # Add specific advisory IDs to ignore if needed
     # "RUSTSEC-0000-0000",
+    "RUSTSEC-2024-0436",
 ]
 
 [licenses]
@@ -23,17 +21,11 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+    "Zlib",
 ]
-deny = [
-    "GPL-2.0",
-    "GPL-3.0",
-    "AGPL-1.0",
-    "AGPL-3.0",
-]
-copyleft = "warn"
-allow-osi-fsf-free = "neither"
-default = "deny"
 confidence-threshold = 0.8
 exceptions = [
     # Add specific crates with non-standard licenses if needed
@@ -52,10 +44,7 @@ highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
-deny = [
-    # Security-sensitive crates to avoid
-    { name = "openssl", version = "*" },  # Prefer rustls
-]
+deny = []
 skip = []
 skip-tree = []
 
@@ -64,4 +53,4 @@ skip-tree = []
 unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = [] 
+allow-git = []

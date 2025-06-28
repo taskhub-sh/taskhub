@@ -27,7 +27,7 @@ async fn run_app<B: ratatui::backend::Backend>(
 ) -> io::Result<()> {
     loop {
         terminal.draw(|f| {
-            let size = f.size();
+            let size = f.area();
             draw_task_list(f, size, &app.tasks);
         })?;
 
