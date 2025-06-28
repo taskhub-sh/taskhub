@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_db_operations() -> Result<(), Box<dyn std::error::Error>> {
-    let pool = init_db().await?;
+    let pool = init_db(None).await?;
 
     // Create a task
     let new_task = Task {
