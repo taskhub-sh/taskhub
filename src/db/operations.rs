@@ -1,5 +1,5 @@
 use super::models::Task;
-use sqlx::{SqlitePool, Row};
+use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
 pub async fn create_task(pool: &SqlitePool, task: &Task) -> Result<(), sqlx::Error> {
@@ -25,7 +25,10 @@ pub async fn create_task(pool: &SqlitePool, task: &Task) -> Result<(), sqlx::Err
 }
 
 pub async fn get_task(pool: &SqlitePool, id: Uuid) -> Result<Task, sqlx::Error> {
-    let row = sqlx::query("SELECT * FROM tasks WHERE id = ?").bind(id.to_string()).fetch_one(pool).await?;
+    let row = sqlx::query("SELECT * FROM tasks WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_one(pool)
+        .await?;
     let task = Task {
         id: Uuid::parse_str(row.get("id")).unwrap(),
         external_id: row.get("external_id"),
@@ -74,12 +77,11 @@ pub async fn delete_task(pool: &SqlitePool, id: Uuid) -> Result<(), sqlx::Error>
 }
 
 pub async fn list_tasks(pool: &SqlitePool) -> Result<Vec<Task>, sqlx::Error> {
-    let rows = sqlx::query("SELECT * FROM tasks")
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query("SELECT * FROM tasks").fetch_all(pool).await?;
 
-    let tasks: Vec<Task> = rows.into_iter().map(|row| {
-        Task {
+    let tasks: Vec<Task> = rows
+        .into_iter()
+        .map(|row| Task {
             id: Uuid::parse_str(row.get("id")).unwrap(),
             external_id: row.get("external_id"),
             source: serde_json::from_str(row.get("source")).unwrap(),
@@ -93,8 +95,8 @@ pub async fn list_tasks(pool: &SqlitePool) -> Result<Vec<Task>, sqlx::Error> {
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             custom_fields: serde_json::from_str(row.get("custom_fields")).unwrap(),
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(tasks)
 }

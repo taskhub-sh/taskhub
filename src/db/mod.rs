@@ -1,6 +1,6 @@
-use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
-use std::path::PathBuf;
 use dirs;
+use sqlx::{Sqlite, SqlitePool, migrate::MigrateDatabase};
+use std::path::PathBuf;
 use tokio::fs;
 
 pub mod models;
@@ -17,7 +17,9 @@ pub async fn init_db(db_path: Option<PathBuf>) -> Result<SqlitePool, sqlx::Error
 
     if let Some(parent) = db_file_path.parent() {
         if !parent.exists() {
-            fs::create_dir_all(parent).await.map_err(|e| sqlx::Error::Io(e))?;
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| sqlx::Error::Io(e))?;
         }
     }
 

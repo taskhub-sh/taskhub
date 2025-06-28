@@ -1,9 +1,9 @@
-use ratatui::{
-    layout::Rect,
-    widgets::{Block, Borders, Table, Row, Cell},
-    Frame,
-};
 use crate::db::models::Task;
+use ratatui::{
+    Frame,
+    layout::Rect,
+    widgets::{Block, Borders, Cell, Row, Table},
+};
 
 pub fn draw_task_list(f: &mut Frame<'_>, area: Rect, tasks: &[Task]) {
     let rows: Vec<Row> = tasks
@@ -36,7 +36,7 @@ pub fn draw_task_list(f: &mut Frame<'_>, area: Rect, tasks: &[Task]) {
                 Cell::from("Status"),
                 Cell::from("Priority"),
             ])
-            .bottom_margin(1)
+            .bottom_margin(1),
         )
         .block(Block::default().title("Tasks").borders(Borders::ALL));
 

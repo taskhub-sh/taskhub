@@ -12,7 +12,6 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}} # Only required for Organizations, not personal accounts.
           # Additional secret scanning with TruffleHog
       - name: TruffleHog OSS
         uses: trufflesecurity/trufflehog@main

@@ -1,6 +1,6 @@
-use sqlx::SqlitePool;
 use crate::db::models::Task;
 use crate::db::operations;
+use sqlx::SqlitePool;
 
 pub struct App {
     pub should_quit: bool,
@@ -10,7 +10,7 @@ pub struct App {
 
 impl App {
     pub fn new(db_pool: SqlitePool) -> Self {
-        Self { 
+        Self {
             should_quit: false,
             db_pool,
             tasks: Vec::new(),

@@ -1,12 +1,12 @@
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::Terminal;
 use std::io;
-use taskhub::tui::app::App;
-use taskhub::tui::{cleanup_terminal, setup_terminal};
-use taskhub::tui::views::task_list::draw_task_list;
-use taskhub::db::init_db;
-use taskhub::config::settings::Settings;
 use std::path::PathBuf;
+use taskhub::config::settings::Settings;
+use taskhub::db::init_db;
+use taskhub::tui::app::App;
+use taskhub::tui::views::task_list::draw_task_list;
+use taskhub::tui::{cleanup_terminal, setup_terminal};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,4 +45,3 @@ async fn run_app<B: ratatui::backend::Backend>(
     }
     Ok(())
 }
-

@@ -1,9 +1,8 @@
-
-use taskhub::db::init_db;
-use taskhub::db::models::{Task, TaskSource, TaskStatus, Priority};
-use taskhub::db::operations::{create_task, get_task, update_task, delete_task, list_tasks};
-use uuid::Uuid;
 use std::collections::HashMap;
+use taskhub::db::init_db;
+use taskhub::db::models::{Priority, Task, TaskSource, TaskStatus};
+use taskhub::db::operations::{create_task, delete_task, get_task, list_tasks, update_task};
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_db_operations() -> Result<(), Box<dyn std::error::Error>> {
