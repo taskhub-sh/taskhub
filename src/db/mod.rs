@@ -1,5 +1,4 @@
 use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
-use std::path::Path;
 
 pub mod models;
 pub mod operations;

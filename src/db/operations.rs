@@ -1,7 +1,6 @@
-use super::models::{Task, TaskSource, TaskStatus, Priority};
+use super::models::Task;
 use sqlx::{SqlitePool, Row};
 use uuid::Uuid;
-use std::collections::HashMap;
 
 pub async fn create_task(pool: &SqlitePool, task: &Task) -> Result<(), sqlx::Error> {
     sqlx::query(

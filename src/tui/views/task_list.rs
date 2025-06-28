@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    widgets::{Block, Borders, Widget},
+    widgets::{Block, Borders},
     Frame,
 };
 

@@ -1,5 +1,4 @@
 use crossterm::event::{self, Event, KeyCode};
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;
 use taskhub::tui::app::App;

@@ -1,13 +1,10 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, Widget},
-    Frame,
+    backend::CrosstermBackend,
     Terminal,
 };
 use std::io;
