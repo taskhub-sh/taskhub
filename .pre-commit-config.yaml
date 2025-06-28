@@ -10,7 +10,11 @@ repos:
     hooks:
     -   id: fmt
     -   id: clippy
+-   repo: https://github.com/cathiele/pre-commit-rust
+    rev: v0.1.0
+    hooks:
+    -   id: cargo-audit
 -   repo: https://github.com/gitleaks/gitleaks
-    rev: v8.24.2
+    rev: v8.27.2
     hooks:
       - id: gitleaks
