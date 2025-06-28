@@ -22,6 +22,9 @@ regexes = [
     '''fake_jira_token''',
     '''dummy_token'''
 ]
+paths = [
+    '''Cargo\.lock'''
+]
 
 [[rules]]
 id = "gitlab-token"
