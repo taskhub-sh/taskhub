@@ -7,17 +7,22 @@ pub mod models;
 pub mod operations;
 
 pub async fn init_db(db_path: Option<PathBuf>) -> Result<SqlitePool, sqlx::Error> {
-    let db_file_path = if let Some(path) = db_path {
-        path
+    let db_url = if let Some(path) = db_path {
+        if path.to_str() == Some(":memory:") {
+            "sqlite::memory:".to_string()
+        } else {
+            format!("sqlite://{}", path.to_str().unwrap())
+        }
     } else {
-        get_default_db_path().expect("Could not determine default database path")
+        let path = get_default_db_path().expect("Could not determine default database path");
+        format!("sqlite://{}", path.to_str().unwrap())
     };
 
-    let db_url = format!("sqlite://{}", db_file_path.to_str().unwrap());
-
-    if let Some(parent) = db_file_path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).await.map_err(sqlx::Error::Io)?;
+    if !db_url.contains(":memory:") {
+        if let Some(parent) = PathBuf::from(db_url.strip_prefix("sqlite://").unwrap()).parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).await.map_err(sqlx::Error::Io)?;
+            }
         }
     }
 
