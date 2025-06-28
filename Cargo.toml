@@ -5,12 +5,12 @@ edition = "2024"
 
 [dependencies]
 crossterm = "0.27"
-ratatui = { version = "0.26.1", features = ["all-widgets"] }
+ratatui = { version = "0.26.3", features = ["all-widgets"] }
 
-sqlx = { version = "0.7.4", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8.1", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 reqwest = { version = "0.12.4", features = ["json"] }
 oauth2 = "4.4.0"
-keyring = "2.3.2"
+keyring = "2.3.3"
 tokio = { version = "1.37.0", features = ["full"] }
 clap = { version = "4.5.4", features = ["derive"] }
 config = "0.14.0"

@@ -1,5 +1,5 @@
 use dirs;
-use sqlx::{Sqlite, SqlitePool, migrate::MigrateDatabase};
+use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -23,11 +23,7 @@ pub async fn init_db(db_path: Option<PathBuf>) -> Result<SqlitePool, sqlx::Error
         }
     }
 
-    if !Sqlite::database_exists(&db_url).await.unwrap_or(false) {
-        Sqlite::create_database(&db_url).await?;
-    }
     let pool = SqlitePool::connect(&db_url).await?;
-    sqlx::migrate!("./src/db/migrations").run(&pool).await?;
     Ok(pool)
 }
 
