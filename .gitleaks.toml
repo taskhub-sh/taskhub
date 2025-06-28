@@ -1,0 +1,72 @@
+# Gitleaks configuration for TaskHub
+# See: https://github.com/gitleaks/gitleaks
+
+title = "TaskHub Gitleaks Configuration"
+
+# Custom rules for TaskHub-specific patterns
+[[rules]]
+id = "github-token"
+description = "GitHub Token"
+regex = '''ghp_[0-9a-zA-Z]{36}'''
+tags = ["token", "github"]
+
+[[rules]]
+id = "jira-token"
+description = "Jira API Token"
+regex = '''[A-Za-z0-9]{24}'''
+tags = ["token", "jira"]
+[rules.allowlist]
+description = "Ignore test tokens"
+regexes = [
+    '''test_token_[0-9a-f]+''',
+    '''fake_jira_token''',
+    '''dummy_token'''
+]
+
+[[rules]]
+id = "gitlab-token"
+description = "GitLab Token"
+regex = '''glpat-[0-9a-zA-Z\-_]{20}'''
+tags = ["token", "gitlab"]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api[_-]?key|apikey|secret[_-]?key)['"\s]*[:=]['"\s]*[0-9a-zA-Z]{16,}'''
+tags = ["key", "api"]
+
+# Global allowlist
+[allowlist]
+description = "Global allowlist"
+regexes = [
+    # Test files and examples
+    '''(?i)test.*\.(rs|toml|json|md)''',
+    '''(?i)example.*\.(rs|toml|json|md)''',
+    '''(?i).*_test\.(rs|toml|json)''',
+    '''(?i).*\.example\.(rs|toml|json)''',
+    
+    # Documentation and README files
+    '''(?i)readme\.md''',
+    '''(?i).*\.md''',
+    
+    # Configuration templates
+    '''(?i).*\.template''',
+    '''(?i).*\.sample''',
+    
+    # Known safe patterns
+    '''YOUR_TOKEN_HERE''',
+    '''REPLACE_WITH_TOKEN''',
+    '''<TOKEN>''',
+    '''{{.*}}''',  # Template variables
+    '''\$\{.*\}''',  # Environment variables
+]
+
+paths = [
+    '''tests/fixtures/.*''',
+    '''docs/examples/.*''',
+    '''.github/.*\.md''',
+]
+
+# File extensions to scan
+[extend]
+useDefault = true 
