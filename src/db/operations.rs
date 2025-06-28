@@ -6,7 +6,7 @@ pub async fn create_task(pool: &SqlitePool, task: &Task) -> Result<(), sqlx::Err
     sqlx::query(
         "INSERT INTO tasks (id, external_id, source, title, description, status, priority, assignee, labels, due_date, created_at, updated_at, custom_fields) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(&task.id.to_string())
+    .bind(task.id.to_string())
     .bind(&task.external_id)
     .bind(serde_json::to_string(&task.source).unwrap())
     .bind(&task.title)
@@ -62,7 +62,7 @@ pub async fn update_task(pool: &SqlitePool, task: &Task) -> Result<(), sqlx::Err
     .bind(&task.due_date)
     .bind(&task.updated_at)
     .bind(serde_json::to_string(&task.custom_fields).unwrap())
-    .bind(&task.id.to_string())
+    .bind(task.id.to_string())
     .execute(pool)
     .await?;
     Ok(())

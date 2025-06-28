@@ -36,7 +36,7 @@ impl GitHubClient {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("token {}", token)).unwrap(),
+            header::HeaderValue::from_str(&format!("token {token}")).unwrap(),
         );
         headers.insert(
             header::USER_AGENT,

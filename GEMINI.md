@@ -1,3 +1,4 @@
 - Always run cargo audit to check for security vulnerability in packages. You **must** fix all errors. Allowed warnings are ok.
 - Always run cargo test to check tests pass. You **must** fix all errors and warnings.
 - Always run cargo build to check the program compiles correctly. You **must** fix all errors and warnings.
+- Always run cargo clippy to lint the program. You **must** fix all errors and warnings.

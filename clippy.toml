@@ -1,1 +1,1 @@
-disallowed-methods = ["println!"]
+disallowed-names = ["std::println"]
