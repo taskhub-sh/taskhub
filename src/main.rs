@@ -4,11 +4,14 @@ use std::io;
 use taskhub::tui::app::App;
 use taskhub::tui::{cleanup_terminal, setup_terminal};
 use taskhub::tui::views::task_list::draw_task_list;
+use taskhub::db::init_db;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let db_pool = init_db().await?;
     let mut terminal = setup_terminal()?;
-    let mut app = App::new();
+    let mut app = App::new(db_pool);
+    app.load_tasks().await?;
     run_app(&mut terminal, &mut app).await?;
     cleanup_terminal(&mut terminal)?;
     Ok(())
@@ -21,7 +24,7 @@ async fn run_app<B: ratatui::backend::Backend>(
     loop {
         terminal.draw(|f| {
             let size = f.size();
-            draw_task_list(f, size);
+            draw_task_list(f, size, &app.tasks);
         })?;
 
         if event::poll(std::time::Duration::from_millis(250))? {
