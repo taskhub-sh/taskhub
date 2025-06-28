@@ -1,0 +1,213 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# TaskHub Development Rules
+
+## Project Overview
+You are working on TaskHub, a terminal-based multi-source task management system built in Rust. This project aggregates tasks from multiple sources (Jira, GitHub Issues, GitLab Issues, markdown files) into a unified terminal interface.
+
+## Core Principles
+1. **Developer-First**: Build for developers, prioritizing speed and efficiency
+2. **Terminal-Native**: Full terminal functionality with specialized `/` commands
+3. **Performance**: Rust-powered with <50ms response times for local operations
+4. **Security**: Secure credential handling, encryption at rest, minimal permissions
+5. **Test-Driven**: 90%+ test coverage, comprehensive testing strategy
+
+## Architecture Requirements
+
+### Technology Stack
+- **Language**: Rust (2021 edition)
+- **Terminal**: `crossterm` for cross-platform terminal handling
+- **TUI**: `ratatui` for terminal UI components
+- **Database**: SQLite with `sqlx` for local storage
+- **HTTP**: `reqwest` with async support for API integrations
+- **Auth**: `oauth2` for OAuth flows, `keyring` for credential storage
+- **Async**: `tokio` runtime for concurrent operations
+- **CLI**: `clap` for command parsing
+- **Config**: `config-rs` for configuration management
+- **Serialization**: `serde` with JSON/YAML support
+
+### Project Structure
+```
+src/
+├── main.rs              # Entry point
+├── cli/                 # Command-line interface
+│   ├── mod.rs
+│   ├── parser.rs        # Command parsing logic
+│   └── commands/        # Individual command implementations
+├── tui/                 # Terminal UI components
+│   ├── mod.rs
+│   ├── app.rs          # Main application state
+│   ├── components/     # Reusable UI components
+│   └── views/          # Different screens/views
+├── db/                  # Database layer
+│   ├── mod.rs
+│   ├── models.rs       # Data models
+│   ├── migrations/     # Database migrations
+│   └── operations.rs   # CRUD operations
+├── integrations/        # External service integrations
+│   ├── mod.rs
+│   ├── github/         # GitHub API client
+│   ├── jira/           # Jira API client
+│   └── gitlab/         # GitLab API client
+├── sync/               # Synchronization engine
+│   ├── mod.rs
+│   ├── engine.rs       # Main sync logic
+│   └── conflict.rs     # Conflict resolution
+├── config/             # Configuration management
+│   ├── mod.rs
+│   └── settings.rs
+└── lib.rs              # Library exports
+```
+
+## Implementation Guidelines
+
+### 1. Code Quality
+- **Error Handling**: Use `Result<T, E>` everywhere, create custom error types
+- **Async**: Use `async/await` for all I/O operations
+- **Memory Safety**: Leverage Rust's ownership system, avoid `unsafe` code
+- **Performance**: Profile critical paths, use efficient data structures
+- **Documentation**: Document all public APIs with `///` comments
+
+### 2. Database Design
+Follow the Task model from PRD:
+```rust
+struct Task {
+    id: Uuid,
+    external_id: Option<String>,
+    source: TaskSource,
+    title: String,
+    description: Option<String>,
+    status: TaskStatus,
+    priority: Priority,
+    assignee: Option<String>,
+    labels: Vec<String>,
+    due_date: Option<DateTime>,
+    created_at: DateTime,
+    updated_at: DateTime,
+    custom_fields: HashMap<String, Value>,
+}
+```
+
+### 3. Terminal Interface
+- **Hybrid Mode**: Support both shell commands and `/` prefixed TaskHub commands
+- **Responsive**: Handle terminal resizing gracefully
+- **Keyboard Navigation**: Vim-style keybindings with arrow key support
+- **Visual Feedback**: Progress indicators, status updates, confirmations
+
+### 4. Security Requirements
+- **Credential Storage**: Use OS keychain via `keyring` crate
+- **Token Encryption**: Encrypt all API tokens before storage
+- **Input Validation**: Validate and sanitize all user inputs
+- **Minimal Permissions**: Request only necessary API scopes
+- **Secure Communication**: TLS 1.3 for all external API calls
+
+### 5. Testing Strategy
+- **Unit Tests**: Test individual functions and methods (95% coverage target)
+- **Integration Tests**: Test component interactions with mocks
+- **Performance Tests**: Benchmark critical operations
+- **E2E Tests**: Test complete user workflows
+
+## Current MVP Focus (Phase 1)
+
+### Priority Order (from TASKS.md):
+1. **Week 1-2**: Project setup, database foundation, basic terminal interface
+2. **Week 3-4**: GitHub integration, core task management, testing
+3. **Week 5-6**: Documentation, UX improvements, performance optimization
+
+### MVP Success Criteria:
+- Users can connect to GitHub and see their issues
+- Users can create, update, delete tasks locally
+- Bidirectional sync with GitHub
+- Responsive TUI with good UX
+- <200ms response time for core operations
+- 90%+ test coverage
+
+## Development Patterns
+
+### Error Handling
+```rust
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum TaskHubError {
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+    #[error("GitHub API error: {0}")]
+    GitHub(String),
+    #[error("Configuration error: {0}")]
+    Config(String),
+}
+
+type Result<T> = std::result::Result<T, TaskHubError>;
+```
+
+### Async Operations
+```rust
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Always use async for I/O operations
+    let tasks = db::load_tasks().await?;
+    let github_issues = github::fetch_issues().await?;
+    Ok(())
+}
+```
+
+### Command Structure
+```rust
+// Commands should follow this pattern
+pub async fn handle_tasks_command(args: TasksArgs) -> Result<()> {
+    match args.subcommand {
+        TasksSubcommand::List(list_args) => handle_list(list_args).await,
+        TasksSubcommand::Create(create_args) => handle_create(create_args).await,
+        // ...
+    }
+}
+```
+
+## Coding Standards
+
+### Naming Conventions
+- **Modules**: `snake_case` (e.g., `github_client`)
+- **Functions**: `snake_case` (e.g., `fetch_issues`)
+- **Types**: `PascalCase` (e.g., `TaskSource`)
+- **Constants**: `SCREAMING_SNAKE_CASE` (e.g., `DEFAULT_TIMEOUT`)
+
+### Performance Guidelines
+- Use `Vec::with_capacity()` when size is known
+- Prefer `&str` over `String` for function parameters
+- Use `Arc<T>` for shared data across threads
+- Implement `Clone` judiciously
+- Profile with `cargo bench` for critical paths
+
+### Git Workflow
+- Feature branches for all changes
+- Descriptive commit messages
+- Reference TASKS.md task numbers in commits
+- Open Merge request on task when its done
+
+## Documentation Requirements
+- All public APIs must have documentation
+- Include examples in doc comments
+- Maintain README with current setup instructions
+- Document architectural decisions in ADRs
+
+## Before You Code
+1. Check TASKS.md for current priorities
+2. Ensure the task aligns with MVP goals
+3. Consider security implications
+4. Plan for testability
+5. Review PRD for context and requirements
+
+## Command Examples to Implement
+```
+/tasks list --status open --source github
+/tasks create "Fix login bug" --priority high
+/tasks update GH-123 --status done
+/sync github --repo owner/repo
+/config set github.token
+```
+
+Remember: We're building the foundation for a powerful developer tool. Every decision should prioritize developer experience, performance, and reliability. 
