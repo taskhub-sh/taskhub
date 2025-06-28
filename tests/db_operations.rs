@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+
 use taskhub::db::init_db;
 use taskhub::db::models::{Task, TaskSource, TaskStatus, Priority};
 use taskhub::db::operations::{create_task, get_task, update_task, delete_task, list_tasks};

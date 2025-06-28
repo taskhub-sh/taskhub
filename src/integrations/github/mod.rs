@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 struct GitHubIssue {
-    id: u64,
+    
     number: u64,
     title: String,
     body: Option<String>,

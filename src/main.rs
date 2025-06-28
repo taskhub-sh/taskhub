@@ -5,10 +5,14 @@ use taskhub::tui::app::App;
 use taskhub::tui::{cleanup_terminal, setup_terminal};
 use taskhub::tui::views::task_list::draw_task_list;
 use taskhub::db::init_db;
+use taskhub::config::settings::Settings;
+use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db_pool = init_db().await?;
+    let settings = Settings::new()?;
+    let db_path = settings.database_path.map(PathBuf::from);
+    let db_pool = init_db(db_path).await?;
     let mut terminal = setup_terminal()?;
     let mut app = App::new(db_pool);
     app.load_tasks().await?;
