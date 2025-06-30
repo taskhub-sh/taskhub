@@ -187,6 +187,7 @@ pub async fn handle_tasks_command(args: TasksArgs) -> Result<()> {
 - Descriptive commit messages
 - Reference TASKS.md task numbers in commits
 - Open Merge request on task when its done
+- Each merge request should contain the initial prompt for the session.
 
 ## Documentation Requirements
 - All public APIs must have documentation
