@@ -2361,6 +2361,7 @@ dependencies = [
 name = "taskhub"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "config",
  "crossterm 0.29.0",
