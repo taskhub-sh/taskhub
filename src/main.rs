@@ -43,6 +43,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                         &app.command_history,
                         &app.current_input,
                         app.cursor_position,
+                        app.scroll_offset,
                     );
                 }
             }

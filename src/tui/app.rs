@@ -21,6 +21,7 @@ pub struct App {
     pub current_input: String,
     pub cursor_position: usize,
     pub pending_command: Option<String>,
+    pub scroll_offset: usize,
 }
 
 impl App {
@@ -34,6 +35,7 @@ impl App {
             current_input: String::new(),
             cursor_position: 0,
             pending_command: None,
+            scroll_offset: 0,
         }
     }
 
@@ -73,6 +75,9 @@ impl App {
 
                         // Mark that we need to execute this command
                         self.pending_command = Some(command);
+
+                        // Reset scroll to bottom when new command is entered
+                        self.scroll_offset = 0;
                     }
                 }
                 KeyCode::Backspace => {
@@ -106,11 +111,45 @@ impl App {
                         self.cursor_position += 1;
                     }
                 }
+                KeyCode::Up => {
+                    // Scroll up through history (show older content)
+                    if self.current_input.is_empty() {
+                        let max_scroll = self.get_total_history_lines().saturating_sub(1);
+                        if self.scroll_offset < max_scroll {
+                            self.scroll_offset += 1;
+                        }
+                    }
+                }
+                KeyCode::Down => {
+                    // Scroll down through history (show newer content)
+                    if self.current_input.is_empty() && self.scroll_offset > 0 {
+                        self.scroll_offset -= 1;
+                    }
+                }
+                KeyCode::PageUp => {
+                    // Scroll up by 10 lines
+                    let max_scroll = self.get_total_history_lines().saturating_sub(1);
+                    self.scroll_offset = (self.scroll_offset + 10).min(max_scroll);
+                }
+                KeyCode::PageDown => {
+                    // Scroll down by 10 lines
+                    self.scroll_offset = self.scroll_offset.saturating_sub(10);
+                }
                 KeyCode::Home => {
-                    self.cursor_position = 0;
+                    if self.current_input.is_empty() {
+                        // Go to top of history
+                        self.scroll_offset = self.get_total_history_lines().saturating_sub(1);
+                    } else {
+                        self.cursor_position = 0;
+                    }
                 }
                 KeyCode::End => {
-                    self.cursor_position = self.current_input.chars().count();
+                    if self.current_input.is_empty() {
+                        // Go to bottom of history
+                        self.scroll_offset = 0;
+                    } else {
+                        self.cursor_position = self.current_input.chars().count();
+                    }
                 }
                 _ => {}
             }
@@ -183,5 +222,24 @@ impl App {
         if self.command_history.len() > 1000 {
             self.command_history.drain(0..100);
         }
+
+        // Reset scroll to bottom when new command is executed
+        self.scroll_offset = 0;
+    }
+
+    /// Calculate total number of lines in command history
+    pub fn get_total_history_lines(&self) -> usize {
+        let mut total_lines = 0;
+        for entry in &self.command_history {
+            // Command line
+            total_lines += 1;
+            // Output lines
+            if !entry.output.is_empty() {
+                total_lines += entry.output.lines().count();
+            }
+            // Empty spacing line
+            total_lines += 1;
+        }
+        total_lines
     }
 }

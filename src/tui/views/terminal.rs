@@ -20,6 +20,7 @@ pub fn draw_terminal(
     command_history: &[CommandEntry],
     current_input: &str,
     cursor_position: usize,
+    scroll_offset: usize,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -27,17 +28,22 @@ pub fn draw_terminal(
         .split(area);
 
     // Command history area
-    draw_command_history(f, chunks[0], command_history);
+    draw_command_history(f, chunks[0], command_history, scroll_offset);
 
     // Input area
     draw_input_box(f, chunks[1], current_input, cursor_position);
 }
 
-fn draw_command_history(f: &mut Frame<'_>, area: Rect, command_history: &[CommandEntry]) {
-    let mut items = Vec::new();
+fn draw_command_history(
+    f: &mut Frame<'_>,
+    area: Rect,
+    command_history: &[CommandEntry],
+    scroll_offset: usize,
+) {
+    // Create all history items first
+    let mut all_items = Vec::new();
 
-    for entry in command_history.iter().rev().take(100) {
-        // Show last 100 commands
+    for entry in command_history.iter() {
         // Add command line
         let command_style = if entry.success {
             Style::default().fg(Color::Green)
@@ -45,7 +51,7 @@ fn draw_command_history(f: &mut Frame<'_>, area: Rect, command_history: &[Comman
             Style::default().fg(Color::Red)
         };
 
-        items.push(ListItem::new(Line::from(vec![
+        all_items.push(ListItem::new(Line::from(vec![
             Span::styled(
                 format!("{}> ", entry.timestamp),
                 Style::default().fg(Color::Cyan),
@@ -56,7 +62,7 @@ fn draw_command_history(f: &mut Frame<'_>, area: Rect, command_history: &[Comman
         // Add output lines
         if !entry.output.is_empty() {
             for line in entry.output.lines() {
-                items.push(ListItem::new(Line::from(Span::styled(
+                all_items.push(ListItem::new(Line::from(Span::styled(
                     line,
                     Style::default().fg(Color::White),
                 ))));
@@ -64,12 +70,46 @@ fn draw_command_history(f: &mut Frame<'_>, area: Rect, command_history: &[Comman
         }
 
         // Add empty line for spacing
-        items.push(ListItem::new(Line::from("")));
+        all_items.push(ListItem::new(Line::from("")));
     }
 
-    let list = List::new(items).block(
+    // Calculate available height (subtract 2 for borders)
+    let available_height = area.height.saturating_sub(2) as usize;
+
+    // Calculate which items to show based on scroll offset
+    let total_items = all_items.len();
+    let visible_items = if total_items <= available_height {
+        // All items fit, show them all
+        all_items
+    } else {
+        // Need to scroll - show from bottom up with offset
+        let start_index = if scroll_offset >= total_items {
+            0
+        } else {
+            total_items.saturating_sub(available_height + scroll_offset)
+        };
+
+        let end_index = if scroll_offset == 0 {
+            total_items
+        } else {
+            total_items.saturating_sub(scroll_offset)
+        };
+
+        all_items[start_index..end_index].to_vec()
+    };
+
+    // Create scroll indicator text
+    let scroll_info = if scroll_offset > 0 {
+        format!("Terminal Output (↑{scroll_offset} lines scrolled)")
+    } else if total_items > available_height {
+        "Terminal Output (Use ↑↓ to scroll, Home/End for top/bottom)".to_string()
+    } else {
+        "Terminal Output".to_string()
+    };
+
+    let list = List::new(visible_items).block(
         Block::default()
-            .title("Terminal Output")
+            .title(scroll_info)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Blue)),
     );
