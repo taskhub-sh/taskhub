@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
 use taskhub::db::init_db;
 use taskhub::db::models::{Priority, Task, TaskSource, TaskStatus};
 use taskhub::db::operations::{create_task, delete_task, get_task, list_tasks, update_task};
@@ -8,16 +7,6 @@ use uuid::Uuid;
 #[tokio::test]
 async fn test_db_operations() -> Result<(), Box<dyn std::error::Error>> {
     let pool = init_db(Some(":memory:".into())).await?;
-
-    // Run migrations
-    let migration_files = fs::read_dir("./src/db/migrations")?
-        .map(|res| res.map(|e| e.path()))
-        .collect::<Result<Vec<_>, std::io::Error>>()?;
-
-    for file in migration_files {
-        let sql = fs::read_to_string(file)?;
-        sqlx::query(&sql).execute(&pool).await?;
-    }
 
     // Create a task
     let new_task = Task {
