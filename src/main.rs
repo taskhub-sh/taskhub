@@ -4,8 +4,9 @@ use std::io;
 use std::path::PathBuf;
 use taskhub::config::settings::Settings;
 use taskhub::db::init_db;
-use taskhub::tui::app::App;
+use taskhub::tui::app::{App, AppMode};
 use taskhub::tui::views::task_list::draw_task_list;
+use taskhub::tui::views::terminal::draw_terminal;
 use taskhub::tui::{cleanup_terminal, setup_terminal};
 
 #[tokio::main]
@@ -26,15 +27,37 @@ async fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> io::Result<()> {
     loop {
+        // Handle any pending commands
+        app.handle_pending_commands().await;
+
         terminal.draw(|f| {
             let size = f.area();
-            draw_task_list(f, size, &app.tasks);
+            match app.mode {
+                AppMode::TaskList => {
+                    draw_task_list(f, size, &app.tasks);
+                }
+                AppMode::Terminal => {
+                    draw_terminal(
+                        f,
+                        size,
+                        &app.command_history,
+                        &app.current_input,
+                        app.cursor_position,
+                        app.scroll_offset,
+                    );
+                }
+            }
         })?;
 
-        if event::poll(std::time::Duration::from_millis(250))? {
+        if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                if let KeyCode::Char(c) = key.code {
-                    app.on_key(c);
+                match key.code {
+                    KeyCode::Char(c) => {
+                        app.on_key(c);
+                    }
+                    other_key => {
+                        app.on_key_code(other_key);
+                    }
                 }
             }
         }

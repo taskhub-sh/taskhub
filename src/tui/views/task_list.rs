@@ -38,7 +38,11 @@ pub fn draw_task_list(f: &mut Frame<'_>, area: Rect, tasks: &[Task]) {
             ])
             .bottom_margin(1),
         )
-        .block(Block::default().title("Tasks").borders(Borders::ALL));
+        .block(
+            Block::default()
+                .title("Tasks (Press 't' for terminal mode, 'q' to quit)")
+                .borders(Borders::ALL),
+        );
 
     f.render_widget(table, area);
 }
