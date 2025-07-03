@@ -14,24 +14,54 @@ pub struct CommandEntry {
     pub success: bool,
 }
 
-pub fn draw_terminal(
-    f: &mut Frame<'_>,
-    area: Rect,
-    command_history: &[CommandEntry],
-    current_input: &str,
-    cursor_position: usize,
-    scroll_offset: usize,
-) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(3)])
-        .split(area);
+pub struct TerminalDisplayState<'a> {
+    pub command_history: &'a [CommandEntry],
+    pub current_input: &'a str,
+    pub cursor_position: usize,
+    pub scroll_offset: usize,
+    pub show_command_list: bool,
+    pub filtered_commands: &'a [String],
+    pub selected_command_index: usize,
+}
 
-    // Command history area
-    draw_command_history(f, chunks[0], command_history, scroll_offset);
+pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState<'_>) {
+    if state.show_command_list {
+        // Split into three areas: history, command list, input
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(state.filtered_commands.len().min(8) as u16 + 2),
+                Constraint::Length(3),
+            ])
+            .split(area);
 
-    // Input area
-    draw_input_box(f, chunks[1], current_input, cursor_position);
+        // Command history area
+        draw_command_history(f, chunks[0], state.command_history, state.scroll_offset);
+
+        // Command list area
+        draw_command_list(
+            f,
+            chunks[1],
+            state.filtered_commands,
+            state.selected_command_index,
+        );
+
+        // Input area
+        draw_input_box(f, chunks[2], state.current_input, state.cursor_position);
+    } else {
+        // Normal two-area layout
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(3)])
+            .split(area);
+
+        // Command history area
+        draw_command_history(f, chunks[0], state.command_history, state.scroll_offset);
+
+        // Input area
+        draw_input_box(f, chunks[1], state.current_input, state.cursor_position);
+    }
 }
 
 fn draw_command_history(
@@ -117,6 +147,35 @@ fn draw_command_history(
     f.render_widget(list, area);
 }
 
+fn draw_command_list(
+    f: &mut Frame<'_>,
+    area: Rect,
+    filtered_commands: &[String],
+    selected_index: usize,
+) {
+    let items: Vec<ListItem> = filtered_commands
+        .iter()
+        .enumerate()
+        .map(|(i, cmd)| {
+            let style = if i == selected_index {
+                Style::default().bg(Color::Blue).fg(Color::White)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+            ListItem::new(Line::from(Span::styled(cmd, style)))
+        })
+        .collect();
+
+    let list = List::new(items).block(
+        Block::default()
+            .title("Commands (↑↓ to navigate, Enter to select, Esc to cancel)")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Green)),
+    );
+
+    f.render_widget(list, area);
+}
+
 fn draw_input_box(f: &mut Frame<'_>, area: Rect, current_input: &str, cursor_position: usize) {
     let chars: Vec<char> = current_input.chars().collect();
     let cursor_pos = cursor_position.min(chars.len());
@@ -141,9 +200,15 @@ fn draw_input_box(f: &mut Frame<'_>, area: Rect, current_input: &str, cursor_pos
         ])
     };
 
+    let title = if current_input.starts_with('/') {
+        "Command Input (Type to filter commands)"
+    } else {
+        "Command Input (Type / for commands, /quit to exit)"
+    };
+
     let input = Paragraph::new(input_text).block(
         Block::default()
-            .title("Command Input (Press Esc to exit terminal mode)")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow)),
     );

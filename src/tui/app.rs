@@ -22,10 +22,20 @@ pub struct App {
     pub cursor_position: usize,
     pub pending_command: Option<String>,
     pub scroll_offset: usize,
+    pub show_command_list: bool,
+    pub command_filter: String,
+    pub selected_command_index: usize,
+    pub available_commands: Vec<String>,
 }
 
 impl App {
     pub fn new(db_pool: SqlitePool) -> Self {
+        let available_commands = vec![
+            "/quit".to_string(),
+            "/task".to_string(),
+            "/help".to_string(),
+        ];
+
         Self {
             should_quit: false,
             db_pool,
@@ -36,6 +46,10 @@ impl App {
             cursor_position: 0,
             pending_command: None,
             scroll_offset: 0,
+            show_command_list: false,
+            command_filter: String::new(),
+            selected_command_index: 0,
+            available_commands,
         }
     }
 
@@ -47,9 +61,7 @@ impl App {
     pub fn on_key(&mut self, key: char) {
         match self.mode {
             AppMode::TaskList => {
-                if key == 'q' {
-                    self.should_quit = true;
-                } else if key == 't' {
+                if key == 'q' || key == 't' {
                     self.mode = AppMode::Terminal;
                 }
             }
@@ -65,13 +77,36 @@ impl App {
         if self.mode == AppMode::Terminal {
             match key_code {
                 KeyCode::Esc => {
-                    self.mode = AppMode::TaskList;
+                    if self.show_command_list {
+                        self.show_command_list = false;
+                        self.command_filter.clear();
+                        self.selected_command_index = 0;
+                    }
                 }
                 KeyCode::Enter => {
-                    if !self.current_input.trim().is_empty() {
+                    if self.show_command_list {
+                        // Select the currently highlighted command
+                        let filtered_commands = self.get_filtered_commands();
+                        if !filtered_commands.is_empty()
+                            && self.selected_command_index < filtered_commands.len()
+                        {
+                            let selected_command =
+                                filtered_commands[self.selected_command_index].clone();
+                            self.current_input = selected_command;
+                            self.cursor_position = self.current_input.chars().count();
+                            self.show_command_list = false;
+                            self.command_filter.clear();
+                            self.selected_command_index = 0;
+                        }
+                    } else if !self.current_input.trim().is_empty() {
                         let command = self.current_input.trim().to_string();
                         self.current_input.clear();
                         self.cursor_position = 0;
+
+                        // Handle built-in commands
+                        if self.handle_builtin_command(&command) {
+                            return;
+                        }
 
                         // Mark that we need to execute this command
                         self.pending_command = Some(command);
@@ -88,6 +123,9 @@ impl App {
                             chars.remove(cursor_pos - 1);
                             self.current_input = chars.into_iter().collect();
                             self.cursor_position = cursor_pos - 1;
+
+                            // Update command filtering
+                            self.update_command_filtering();
                         }
                     }
                 }
@@ -98,6 +136,9 @@ impl App {
                         let mut chars = chars;
                         chars.remove(cursor_pos);
                         self.current_input = chars.into_iter().collect();
+
+                        // Update command filtering
+                        self.update_command_filtering();
                     }
                 }
                 KeyCode::Left => {
@@ -112,8 +153,13 @@ impl App {
                     }
                 }
                 KeyCode::Up => {
-                    // Scroll up through history (show older content)
-                    if self.current_input.is_empty() {
+                    if self.show_command_list {
+                        // Navigate up in command list
+                        if self.selected_command_index > 0 {
+                            self.selected_command_index -= 1;
+                        }
+                    } else if self.current_input.is_empty() {
+                        // Scroll up through history (show older content)
                         let max_scroll = self.get_total_history_lines().saturating_sub(1);
                         if self.scroll_offset < max_scroll {
                             self.scroll_offset += 1;
@@ -121,8 +167,14 @@ impl App {
                     }
                 }
                 KeyCode::Down => {
-                    // Scroll down through history (show newer content)
-                    if self.current_input.is_empty() && self.scroll_offset > 0 {
+                    if self.show_command_list {
+                        // Navigate down in command list
+                        let filtered_commands = self.get_filtered_commands();
+                        if self.selected_command_index < filtered_commands.len().saturating_sub(1) {
+                            self.selected_command_index += 1;
+                        }
+                    } else if self.current_input.is_empty() && self.scroll_offset > 0 {
+                        // Scroll down through history (show newer content)
                         self.scroll_offset -= 1;
                     }
                 }
@@ -166,6 +218,16 @@ impl App {
         chars.insert(cursor_pos, ch);
         self.current_input = chars.into_iter().collect();
         self.cursor_position = cursor_pos + 1;
+
+        // Check if we're starting to type a command
+        if self.current_input.starts_with('/') {
+            self.command_filter = self.current_input[1..].to_string();
+            self.show_command_list = true;
+            self.selected_command_index = 0;
+        } else {
+            self.show_command_list = false;
+            self.command_filter.clear();
+        }
     }
 
     pub async fn handle_pending_commands(&mut self) {
@@ -241,5 +303,56 @@ impl App {
             total_lines += 1;
         }
         total_lines
+    }
+
+    /// Update command filtering based on current input
+    pub fn update_command_filtering(&mut self) {
+        if self.current_input.starts_with('/') {
+            self.command_filter = self.current_input[1..].to_string();
+            self.show_command_list = true;
+            self.selected_command_index = 0;
+        } else {
+            self.show_command_list = false;
+            self.command_filter.clear();
+        }
+    }
+
+    /// Get filtered commands based on current filter
+    pub fn get_filtered_commands(&self) -> Vec<String> {
+        if self.command_filter.is_empty() {
+            self.available_commands.clone()
+        } else {
+            self.available_commands
+                .iter()
+                .filter(|cmd| cmd[1..].starts_with(&self.command_filter))
+                .cloned()
+                .collect()
+        }
+    }
+
+    /// Handle built-in commands that don't need shell execution
+    pub fn handle_builtin_command(&mut self, command: &str) -> bool {
+        match command {
+            "/quit" => {
+                self.should_quit = true;
+                true
+            }
+            "/task" => {
+                self.mode = AppMode::TaskList;
+                true
+            }
+            "/help" => {
+                let help_text = "Available commands:\n/quit - Exit the application\n/task - Switch to task list view\n/help - Show this help message";
+                let entry = CommandEntry {
+                    command: command.to_string(),
+                    output: help_text.to_string(),
+                    timestamp: chrono::Utc::now().format("%H:%M:%S").to_string(),
+                    success: true,
+                };
+                self.command_history.push(entry);
+                true
+            }
+            _ => false,
+        }
     }
 }

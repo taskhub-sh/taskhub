@@ -6,7 +6,7 @@ use taskhub::config::settings::Settings;
 use taskhub::db::init_db;
 use taskhub::tui::app::{App, AppMode};
 use taskhub::tui::views::task_list::draw_task_list;
-use taskhub::tui::views::terminal::draw_terminal;
+use taskhub::tui::views::terminal::{TerminalDisplayState, draw_terminal};
 use taskhub::tui::{cleanup_terminal, setup_terminal};
 
 #[tokio::main]
@@ -37,14 +37,17 @@ async fn run_app<B: ratatui::backend::Backend>(
                     draw_task_list(f, size, &app.tasks);
                 }
                 AppMode::Terminal => {
-                    draw_terminal(
-                        f,
-                        size,
-                        &app.command_history,
-                        &app.current_input,
-                        app.cursor_position,
-                        app.scroll_offset,
-                    );
+                    let filtered_commands = app.get_filtered_commands();
+                    let state = TerminalDisplayState {
+                        command_history: &app.command_history,
+                        current_input: &app.current_input,
+                        cursor_position: app.cursor_position,
+                        scroll_offset: app.scroll_offset,
+                        show_command_list: app.show_command_list,
+                        filtered_commands: &filtered_commands,
+                        selected_command_index: app.selected_command_index,
+                    };
+                    draw_terminal(f, size, &state);
                 }
             }
         })?;
