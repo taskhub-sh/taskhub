@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum TaskSource {
     Jira,
     GitHub,
@@ -17,7 +17,7 @@ impl fmt::Display for TaskSource {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum TaskStatus {
     Open,
     InProgress,
@@ -30,7 +30,7 @@ impl fmt::Display for TaskStatus {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum Priority {
     High,
     Medium,
