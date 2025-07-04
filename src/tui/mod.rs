@@ -7,6 +7,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 
 pub mod app;
+pub mod completion;
 pub mod components;
 pub mod views;
 
