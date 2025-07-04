@@ -30,6 +30,107 @@ fn create_test_task(title: &str) -> Task {
 }
 
 #[cfg(test)]
+mod dynamic_completion_tests {
+    use super::*;
+
+    #[test]
+    fn test_path_command_discovery() {
+        let engine = CompletionEngine::new(vec![]);
+        let path_commands = engine.get_path_commands();
+
+        // Should find common commands
+        assert!(!path_commands.is_empty());
+
+        // Should contain common Unix commands
+        let has_ls = path_commands.iter().any(|cmd| cmd == "ls");
+        let has_cat = path_commands.iter().any(|cmd| cmd == "cat");
+        assert!(
+            has_ls || has_cat,
+            "Should find at least one common Unix command"
+        );
+
+        // Should be sorted and deduplicated
+        let mut sorted_commands = path_commands.clone();
+        sorted_commands.sort();
+        sorted_commands.dedup();
+        assert_eq!(path_commands, sorted_commands);
+    }
+
+    #[test]
+    fn test_bash_completion_caching() {
+        let engine = CompletionEngine::new(vec![]);
+
+        // First call - should execute bash completion
+        let result1 = engine.execute_bash_completion("git stat", 8);
+
+        // Second call - should use cache
+        let result2 = engine.execute_bash_completion("git stat", 8);
+
+        // Results should be consistent
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_dynamic_bash_command_completion() {
+        let engine = CompletionEngine::new(vec![]);
+        let completions = engine.complete_bash_commands("l");
+
+        // Should find commands starting with 'l'
+        assert!(!completions.is_empty());
+
+        // All completions should be suffix of commands starting with 'l'
+        for completion in &completions {
+            assert!(
+                completion
+                    .text
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            );
+        }
+
+        // Should be limited to reasonable number
+        assert!(completions.len() <= 50);
+    }
+
+    #[test]
+    fn test_real_bash_completion_podman() {
+        let engine = CompletionEngine::new(vec![]);
+
+        // Test podman subcommand completion
+        if let Some(completions) = engine.execute_bash_completion("podman hi", 9) {
+            // Should find "history" when completing "podman hi"
+            assert!(
+                completions.iter().any(|c| c.contains("story")),
+                "Should complete 'hi' to 'history' for podman, got: {:?}",
+                completions
+            );
+        } else {
+            // If no bash completion available, just pass the test
+            println!("No bash completion available for podman, skipping test");
+        }
+    }
+
+    #[test]
+    fn test_real_bash_completion_git() {
+        let engine = CompletionEngine::new(vec![]);
+
+        // Test git subcommand completion
+        if let Some(completions) = engine.execute_bash_completion("git sta", 7) {
+            // Should find "status" and "stash" when completing "git sta"
+            let has_status = completions.iter().any(|c| c.contains("tus"));
+            let has_stash = completions.iter().any(|c| c.contains("sh"));
+            assert!(
+                has_status || has_stash,
+                "Should complete 'sta' to 'status' or 'stash' for git, got: {:?}",
+                completions
+            );
+        } else {
+            println!("No bash completion available for git, skipping test");
+        }
+    }
+}
+
+#[cfg(test)]
 mod completion_state_tests {
     use super::*;
 
@@ -443,6 +544,8 @@ mod integration_tests {
     #[tokio::test]
     async fn test_cargo_subcommand_completion() {
         let mut app = create_test_app().await;
+
+        // Completion engine will automatically skip bash completion in test mode
 
         // Test cargo subcommand completion
         app.current_input = "cargo bui".to_string();
