@@ -5,6 +5,11 @@
 ### 1. Tab Completion for Commands
 - [x] **Implement tab completion for commands and file paths**
   - Add tab completion functionality to the terminal interface. When the user presses Tab, complete the current command based on available commands, file paths, and task titles. Support partial matching and cycle through multiple completions with repeated tab presses. Support bash completions as well.
+- [x] **Implement sub command completion like bash completions**
+  - Allow sub command completion in the same way that bash completions work (possible use bash completion or similar
+    for other shells by identifing the underlying shell). For example if I type `git che<tab>` I want it to complete to `git checkout`
+- [x] **Improve tab completion**
+  - Improve tab completion: In bash when I write `git checkout --<tab><tab>` it completes all the switches available. Lets support that as well.
 
 ### 2. Command History Navigation
 - [ ] **Implement arrow key command history navigation**

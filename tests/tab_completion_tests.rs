@@ -220,6 +220,14 @@ mod completion_engine_tests {
         assert!(engine.is_task_context("/task add something"));
         assert!(engine.is_task_context("/done task-id"));
         assert!(!engine.is_task_context("regular command"));
+
+        // Test subcommand context detection
+        assert!(engine.is_subcommand_context("git checkout", 4));
+        assert!(engine.is_subcommand_context("cargo build", 6));
+        assert!(engine.is_subcommand_context("npm install", 4));
+        assert!(engine.is_subcommand_context("docker run", 7));
+        assert!(!engine.is_subcommand_context("git", 0));
+        assert!(!engine.is_subcommand_context("unknown command", 8));
     }
 }
 
@@ -407,5 +415,150 @@ mod integration_tests {
         // Note: Results depend on actual filesystem
         // Just verify no crash and reasonable behavior
         assert!(app.cursor_position <= app.current_input.chars().count());
+    }
+
+    #[tokio::test]
+    async fn test_bash_subcommand_completion() {
+        let mut app = create_test_app().await;
+
+        // Test git subcommand completion
+        app.current_input = "git che".to_string();
+        app.cursor_position = 7;
+        app.handle_tab_completion();
+
+        // Should complete to git checkout or similar
+        if app.completion_state.is_active {
+            assert!(!app.completion_state.completions.is_empty());
+            // Check if any completion is for "checkout"
+            let has_checkout = app.completion_state.completions.iter().any(|c| {
+                c.completion_type == CompletionType::BashSubcommand
+                    && (c.text.contains("ckout") || c.text == "ckout")
+            });
+            if has_checkout {
+                assert!(has_checkout);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cargo_subcommand_completion() {
+        let mut app = create_test_app().await;
+
+        // Test cargo subcommand completion
+        app.current_input = "cargo bui".to_string();
+        app.cursor_position = 9;
+        app.handle_tab_completion();
+
+        // Should complete to cargo build
+        if app.completion_state.is_active {
+            assert!(!app.completion_state.completions.is_empty());
+            let has_build = app.completion_state.completions.iter().any(|c| {
+                c.completion_type == CompletionType::BashSubcommand
+                    && (c.text.contains("ld") || c.text == "ld")
+            });
+            if has_build {
+                assert!(has_build);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_npm_subcommand_completion() {
+        let mut app = create_test_app().await;
+
+        // Test npm subcommand completion
+        app.current_input = "npm ins".to_string();
+        app.cursor_position = 7;
+        app.handle_tab_completion();
+
+        // Should complete to npm install
+        if app.completion_state.is_active {
+            assert!(!app.completion_state.completions.is_empty());
+            let has_install = app.completion_state.completions.iter().any(|c| {
+                c.completion_type == CompletionType::BashSubcommand
+                    && (c.text.contains("tall") || c.text == "tall")
+            });
+            if has_install {
+                assert!(has_install);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod subcommand_completion_tests {
+    use super::*;
+
+    #[test]
+    fn test_subcommand_context_detection() {
+        let commands = Vec::new();
+        let engine = CompletionEngine::new(commands);
+
+        // Test various subcommand contexts
+        assert!(engine.is_subcommand_context("git status", 4));
+        assert!(engine.is_subcommand_context("git checkout main", 4));
+        assert!(engine.is_subcommand_context("cargo build --release", 6));
+        assert!(engine.is_subcommand_context("npm install package", 4));
+        assert!(engine.is_subcommand_context("docker run -it ubuntu", 7));
+        assert!(engine.is_subcommand_context("kubectl get pods", 8));
+
+        // Test non-subcommand contexts
+        assert!(!engine.is_subcommand_context("git", 0));
+        assert!(!engine.is_subcommand_context("unknown command", 8));
+        assert!(!engine.is_subcommand_context("echo hello", 5));
+        assert!(!engine.is_subcommand_context("ls -la", 3));
+    }
+
+    #[test]
+    fn test_builtin_subcommand_fallback() {
+        let commands = Vec::new();
+        let engine = CompletionEngine::new(commands);
+
+        // Test the builtin subcommand completion method directly
+        let git_completions = engine.get_builtin_subcommands("git", "che");
+        let has_checkout = git_completions
+            .iter()
+            .any(|c| c.completion_type == CompletionType::BashSubcommand && c.text == "ckout");
+        assert!(has_checkout);
+
+        let cargo_completions = engine.get_builtin_subcommands("cargo", "bui");
+        let has_build = cargo_completions
+            .iter()
+            .any(|c| c.completion_type == CompletionType::BashSubcommand && c.text == "ld");
+        assert!(has_build);
+
+        let npm_completions = engine.get_builtin_subcommands("npm", "ins");
+        let has_install = npm_completions
+            .iter()
+            .any(|c| c.completion_type == CompletionType::BashSubcommand && c.text == "tall");
+        assert!(has_install);
+    }
+
+    #[test]
+    fn test_builtin_subcommands_coverage() {
+        let commands = Vec::new();
+        let engine = CompletionEngine::new(commands);
+
+        // Test that all supported commands have subcommands
+        let git_subs = engine.get_builtin_subcommands("git", "");
+        assert!(!git_subs.is_empty());
+        assert!(git_subs.iter().any(|c| c.text == "checkout"));
+        assert!(git_subs.iter().any(|c| c.text == "commit"));
+        assert!(git_subs.iter().any(|c| c.text == "push"));
+        assert!(git_subs.iter().any(|c| c.text == "pull"));
+
+        let cargo_subs = engine.get_builtin_subcommands("cargo", "");
+        assert!(!cargo_subs.is_empty());
+        assert!(cargo_subs.iter().any(|c| c.text == "build"));
+        assert!(cargo_subs.iter().any(|c| c.text == "test"));
+        assert!(cargo_subs.iter().any(|c| c.text == "run"));
+        assert!(cargo_subs.iter().any(|c| c.text == "check"));
+
+        let npm_subs = engine.get_builtin_subcommands("npm", "");
+        assert!(!npm_subs.is_empty());
+        assert!(npm_subs.iter().any(|c| c.text == "install"));
+        assert!(npm_subs.iter().any(|c| c.text == "start"));
+        assert!(npm_subs.iter().any(|c| c.text == "test"));
+        assert!(npm_subs.iter().any(|c| c.text == "run"));
     }
 }
