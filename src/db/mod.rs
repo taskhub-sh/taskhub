@@ -62,8 +62,24 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 fn get_default_db_path() -> Option<PathBuf> {
-    let mut path = dirs::data_dir()?;
-    path.push("taskhub");
+    // Try data_dir first (preferred location)
+    if let Some(mut path) = dirs::data_dir() {
+        path.push("taskhub");
+        path.push("taskhub.db");
+        return Some(path);
+    }
+
+    // Fallback to home directory if data_dir is not available
+    if let Some(mut path) = dirs::home_dir() {
+        path.push(".local");
+        path.push("share");
+        path.push("taskhub");
+        path.push("taskhub.db");
+        return Some(path);
+    }
+
+    // Final fallback to current directory (for CI environments)
+    let mut path = std::env::current_dir().ok()?;
     path.push("taskhub.db");
     Some(path)
 }
