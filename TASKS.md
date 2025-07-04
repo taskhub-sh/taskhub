@@ -11,6 +11,7 @@
 - [x] **Improve tab completion**
   - Improve tab completion: In bash when I write `git checkout --<tab><tab>` it completes all the switches available. Lets support that as well.
 
+
 ### 2. Command History Navigation
 - [ ] **Implement arrow key command history navigation**
   - Add command history navigation using up/down arrow keys. When the user presses up arrow, replace the current input with the previous command from history. Down arrow should move forward through history. Preserve the current partial input when navigating.
