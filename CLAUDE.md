@@ -163,3 +163,7 @@ The terminal interface includes several built-in commands:
 3. Press Enter to select a command
 4. Press Esc to cancel command selection
 5. In TaskList mode, press 'q' to return to Terminal mode
+
+## Development Best Practices
+
+- Start each new task in a separate git feature branch named feature/&lt;description&gt;
