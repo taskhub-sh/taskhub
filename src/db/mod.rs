@@ -27,7 +27,38 @@ pub async fn init_db(db_path: Option<PathBuf>) -> Result<SqlitePool, sqlx::Error
     }
 
     let pool = SqlitePool::connect(&db_url).await?;
+
+    // Run migrations
+    run_migrations(&pool).await?;
+
     Ok(pool)
+}
+
+async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // Create the tasks table
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY NOT NULL,
+            external_id TEXT,
+            source TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            assignee TEXT,
+            labels TEXT,
+            due_date TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            custom_fields TEXT
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 fn get_default_db_path() -> Option<PathBuf> {

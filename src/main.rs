@@ -34,7 +34,17 @@ async fn run_app<B: ratatui::backend::Backend>(
             let size = f.area();
             match app.mode {
                 AppMode::TaskList => {
-                    draw_task_list(f, size, &app.tasks);
+                    let filtered_commands = app.get_filtered_commands();
+                    let state = TerminalDisplayState {
+                        command_history: &app.command_history,
+                        current_input: &app.current_input,
+                        cursor_position: app.cursor_position,
+                        scroll_offset: app.scroll_offset,
+                        show_command_list: app.show_command_list,
+                        filtered_commands: &filtered_commands,
+                        selected_command_index: app.selected_command_index,
+                    };
+                    draw_task_list(f, size, &app.tasks, &state);
                 }
                 AppMode::Terminal => {
                     let filtered_commands = app.get_filtered_commands();
