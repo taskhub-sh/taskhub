@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::Terminal;
 use std::io;
 use std::path::PathBuf;
@@ -30,6 +30,12 @@ async fn run_app<B: ratatui::backend::Backend>(
         // Handle any pending commands
         app.handle_pending_commands().await;
 
+        // Check if any running command has finished
+        app.check_running_command().await;
+
+        // Update spinner animation if command is running
+        app.update_spinner();
+
         terminal.draw(|f| {
             let size = f.area();
             match app.mode {
@@ -43,6 +49,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                         show_command_list: app.show_command_list,
                         filtered_commands: &filtered_commands,
                         selected_command_index: app.selected_command_index,
+                        is_command_running: app.running_command.is_some(),
+                        prompt: app.get_prompt(),
                     };
                     draw_task_list(f, size, &app.tasks, &state);
                 }
@@ -56,6 +64,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                         show_command_list: app.show_command_list,
                         filtered_commands: &filtered_commands,
                         selected_command_index: app.selected_command_index,
+                        is_command_running: app.running_command.is_some(),
+                        prompt: app.get_prompt(),
                     };
                     draw_terminal(f, size, &state);
                 }
@@ -64,12 +74,17 @@ async fn run_app<B: ratatui::backend::Backend>(
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char(c) => {
-                        app.on_key(c);
-                    }
-                    other_key => {
-                        app.on_key_code(other_key);
+                // Handle Ctrl-C to kill running commands
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.kill_running_command().await;
+                } else {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            app.on_key(c);
+                        }
+                        other_key => {
+                            app.on_key_code(other_key);
+                        }
                     }
                 }
             }

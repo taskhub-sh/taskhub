@@ -6,7 +6,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::process::Stdio;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use uuid::Uuid;
 
 #[derive(Debug, PartialEq)]
@@ -32,6 +32,14 @@ pub struct App {
     pub pending_task_add: Option<Task>,
     pub completion_engine: CompletionEngine,
     pub completion_state: CompletionState,
+    pub running_command: Option<RunningCommand>,
+    pub spinner_frame: usize,
+}
+
+pub struct RunningCommand {
+    pub command: String,
+    pub child: Child,
+    pub timestamp: String,
 }
 
 impl App {
@@ -63,12 +71,30 @@ impl App {
             pending_task_add: None,
             completion_engine,
             completion_state: CompletionState::new(),
+            running_command: None,
+            spinner_frame: 0,
         }
     }
 
     pub async fn load_tasks(&mut self) -> Result<(), sqlx::Error> {
         self.tasks = operations::list_tasks(&self.db_pool).await?;
         Ok(())
+    }
+
+    pub fn get_prompt(&self) -> &'static str {
+        if self.running_command.is_some() {
+            // Spinner characters: ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏
+            const SPINNER_CHARS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            SPINNER_CHARS[self.spinner_frame % SPINNER_CHARS.len()]
+        } else {
+            ">"
+        }
+    }
+
+    pub fn update_spinner(&mut self) {
+        if self.running_command.is_some() {
+            self.spinner_frame = (self.spinner_frame + 1) % 10;
+        }
     }
 
     pub fn on_key(&mut self, key: char) {
@@ -88,6 +114,12 @@ impl App {
 
     pub fn on_key_code(&mut self, key_code: crossterm::event::KeyCode) {
         use crossterm::event::KeyCode;
+
+        // Handle Ctrl-C for killing running commands
+        if key_code == KeyCode::Char('c') {
+            // This will be handled by checking for KeyEventKind::Press and KeyModifiers::CONTROL in main.rs
+            return;
+        }
 
         // Handle key codes for both modes
         match self.mode {
@@ -116,13 +148,16 @@ impl App {
 
                                 if is_complete_command {
                                     // Execute the command directly
-                                    self.current_input.clear();
-                                    self.cursor_position = 0;
-                                    self.show_command_list = false;
-                                    self.command_filter.clear();
-                                    self.selected_command_index = 0;
-                                    self.pending_command = Some(command);
-                                    self.scroll_offset = 0;
+                                    // But only if no command is currently running
+                                    if self.running_command.is_none() {
+                                        self.current_input.clear();
+                                        self.cursor_position = 0;
+                                        self.show_command_list = false;
+                                        self.command_filter.clear();
+                                        self.selected_command_index = 0;
+                                        self.pending_command = Some(command);
+                                        self.scroll_offset = 0;
+                                    }
                                 } else {
                                     // Select the currently highlighted command from list
                                     let filtered_commands = self.get_filtered_commands();
@@ -140,10 +175,13 @@ impl App {
                                 }
                             } else {
                                 // No command list showing, execute the command
-                                self.current_input.clear();
-                                self.cursor_position = 0;
-                                self.pending_command = Some(command);
-                                self.scroll_offset = 0;
+                                // But only if no command is currently running
+                                if self.running_command.is_none() {
+                                    self.current_input.clear();
+                                    self.cursor_position = 0;
+                                    self.pending_command = Some(command);
+                                    self.scroll_offset = 0;
+                                }
                             }
                         }
                     }
@@ -323,56 +361,145 @@ impl App {
     }
 
     pub async fn execute_command(&mut self, command: String) {
+        // Don't start a new command if one is already running
+        if self.running_command.is_some() {
+            return;
+        }
+
         let timestamp = Utc::now().format("%H:%M:%S").to_string();
 
-        let result = if cfg!(target_os = "windows") {
-            Command::new("cmd")
+        let child = if cfg!(target_os = "windows") {
+            match Command::new("cmd")
                 .args(["/C", &command])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .output()
-                .await
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(e) => {
+                    let entry = CommandEntry {
+                        command,
+                        output: format!("Error executing command: {e}"),
+                        timestamp,
+                        success: false,
+                    };
+                    self.command_history.push(entry);
+                    self.scroll_offset = 0;
+                    return;
+                }
+            }
         } else {
-            Command::new("sh")
+            match Command::new("sh")
                 .args(["-c", &command])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .output()
-                .await
-        };
-
-        let (output, success) = match result {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let combined_output = if stderr.is_empty() {
-                    stdout.to_string()
-                } else if stdout.is_empty() {
-                    stderr.to_string()
-                } else {
-                    format!("{stdout}\n{stderr}")
-                };
-                (combined_output, output.status.success())
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(e) => {
+                    let entry = CommandEntry {
+                        command,
+                        output: format!("Error executing command: {e}"),
+                        timestamp,
+                        success: false,
+                    };
+                    self.command_history.push(entry);
+                    self.scroll_offset = 0;
+                    return;
+                }
             }
-            Err(e) => (format!("Error executing command: {e}"), false),
         };
 
+        // Store the running command
+        self.running_command = Some(RunningCommand {
+            command: command.clone(),
+            child,
+            timestamp: timestamp.clone(),
+        });
+
+        // Add entry to show command started
         let entry = CommandEntry {
-            command,
-            output,
+            command: command.clone(),
+            output: "Running...".to_string(),
             timestamp,
-            success,
+            success: true,
         };
-
         self.command_history.push(entry);
-
-        // Keep only the last 1000 commands
-        if self.command_history.len() > 1000 {
-            self.command_history.drain(0..100);
-        }
-
-        // Reset scroll to bottom when new command is executed
         self.scroll_offset = 0;
+    }
+
+    pub async fn check_running_command(&mut self) {
+        if let Some(mut running) = self.running_command.take() {
+            match running.child.try_wait() {
+                Ok(Some(status)) => {
+                    // Command finished, collect output
+                    let output = running.child.wait_with_output().await;
+                    let (output_text, success) = match output {
+                        Ok(output) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            let combined_output = if stderr.is_empty() {
+                                stdout.to_string()
+                            } else if stdout.is_empty() {
+                                stderr.to_string()
+                            } else {
+                                format!("{stdout}\n{stderr}")
+                            };
+                            (combined_output, status.success())
+                        }
+                        Err(e) => (format!("Error reading command output: {e}"), false),
+                    };
+
+                    // Update the last entry in history (the "Running..." entry)
+                    if let Some(last_entry) = self.command_history.last_mut() {
+                        if last_entry.command == running.command
+                            && last_entry.output == "Running..."
+                        {
+                            last_entry.output = if output_text.trim().is_empty() {
+                                "(no output)".to_string()
+                            } else {
+                                output_text
+                            };
+                            last_entry.success = success;
+                        }
+                    }
+
+                    // Keep only the last 1000 commands
+                    if self.command_history.len() > 1000 {
+                        self.command_history.drain(0..100);
+                    }
+                }
+                Ok(None) => {
+                    // Command still running, put it back
+                    self.running_command = Some(running);
+                }
+                Err(e) => {
+                    // Error checking status
+                    if let Some(last_entry) = self.command_history.last_mut() {
+                        if last_entry.command == running.command
+                            && last_entry.output == "Running..."
+                        {
+                            last_entry.output = format!("Error checking command status: {e}");
+                            last_entry.success = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn kill_running_command(&mut self) {
+        if let Some(mut running) = self.running_command.take() {
+            let _ = running.child.kill().await;
+
+            // Update the last entry in history
+            if let Some(last_entry) = self.command_history.last_mut() {
+                if last_entry.command == running.command && last_entry.output == "Running..." {
+                    last_entry.output = "Killed by user (Ctrl-C)".to_string();
+                    last_entry.success = false;
+                }
+            }
+        }
     }
 
     /// Calculate total number of lines in command history

@@ -22,6 +22,8 @@ pub struct TerminalDisplayState<'a> {
     pub show_command_list: bool,
     pub filtered_commands: &'a [String],
     pub selected_command_index: usize,
+    pub is_command_running: bool,
+    pub prompt: &'a str,
 }
 
 pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState<'_>) {
@@ -48,7 +50,14 @@ pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState
         );
 
         // Input area
-        draw_input_box(f, chunks[2], state.current_input, state.cursor_position);
+        draw_input_box(
+            f,
+            chunks[2],
+            state.current_input,
+            state.cursor_position,
+            state.is_command_running,
+            state.prompt,
+        );
     } else {
         // Normal two-area layout
         let chunks = Layout::default()
@@ -60,7 +69,14 @@ pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState
         draw_command_history(f, chunks[0], state.command_history, state.scroll_offset);
 
         // Input area
-        draw_input_box(f, chunks[1], state.current_input, state.cursor_position);
+        draw_input_box(
+            f,
+            chunks[1],
+            state.current_input,
+            state.cursor_position,
+            state.is_command_running,
+            state.prompt,
+        );
     }
 }
 
@@ -91,11 +107,14 @@ fn draw_command_history(
 
         // Add output lines
         if !entry.output.is_empty() {
+            let output_style = if entry.output == "Running..." {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
             for line in entry.output.lines() {
-                all_items.push(ListItem::new(Line::from(Span::styled(
-                    line,
-                    Style::default().fg(Color::White),
-                ))));
+                all_items.push(ListItem::new(Line::from(Span::styled(line, output_style))));
             }
         }
 
@@ -176,9 +195,22 @@ fn draw_command_list(
     f.render_widget(list, area);
 }
 
-fn draw_input_box(f: &mut Frame<'_>, area: Rect, current_input: &str, cursor_position: usize) {
+fn draw_input_box(
+    f: &mut Frame<'_>,
+    area: Rect,
+    current_input: &str,
+    cursor_position: usize,
+    is_command_running: bool,
+    prompt: &str,
+) {
     let chars: Vec<char> = current_input.chars().collect();
     let cursor_pos = cursor_position.min(chars.len());
+
+    let prompt_style = if is_command_running {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Green)
+    };
 
     let input_text = if cursor_pos < chars.len() {
         let before_cursor: String = chars[..cursor_pos].iter().collect();
@@ -186,6 +218,7 @@ fn draw_input_box(f: &mut Frame<'_>, area: Rect, current_input: &str, cursor_pos
         let after_cursor: String = chars[(cursor_pos + 1)..].iter().collect();
 
         Line::from(vec![
+            Span::styled(format!("{prompt} "), prompt_style),
             Span::raw(before_cursor),
             Span::styled(
                 cursor_char.to_string(),
@@ -195,12 +228,15 @@ fn draw_input_box(f: &mut Frame<'_>, area: Rect, current_input: &str, cursor_pos
         ])
     } else {
         Line::from(vec![
+            Span::styled(format!("{prompt} "), prompt_style),
             Span::raw(current_input),
             Span::styled(" ", Style::default().bg(Color::White)),
         ])
     };
 
-    let title = if current_input.starts_with('/') {
+    let title = if is_command_running {
+        "Command Input (Command running... Press Ctrl-C to stop)"
+    } else if current_input.starts_with('/') {
         "Command Input (Type to filter commands)"
     } else {
         "Command Input (Type / for commands, /quit to exit)"
