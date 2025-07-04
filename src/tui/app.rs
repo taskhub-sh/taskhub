@@ -1,5 +1,6 @@
 use crate::db::models::{Priority, Task, TaskSource, TaskStatus};
 use crate::db::operations;
+use crate::tui::completion::{CompletionEngine, CompletionState};
 use crate::tui::views::terminal::CommandEntry;
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -29,6 +30,8 @@ pub struct App {
     pub selected_command_index: usize,
     pub available_commands: Vec<String>,
     pub pending_task_add: Option<Task>,
+    pub completion_engine: CompletionEngine,
+    pub completion_state: CompletionState,
 }
 
 impl App {
@@ -40,6 +43,8 @@ impl App {
             "/task list".to_string(),
             "/help".to_string(),
         ];
+
+        let completion_engine = CompletionEngine::new(available_commands.clone());
 
         Self {
             should_quit: false,
@@ -56,6 +61,8 @@ impl App {
             selected_command_index: 0,
             available_commands,
             pending_task_add: None,
+            completion_engine,
+            completion_state: CompletionState::new(),
         }
     }
 
@@ -140,7 +147,12 @@ impl App {
                             }
                         }
                     }
+                    KeyCode::Tab => {
+                        self.handle_tab_completion();
+                    }
                     KeyCode::Backspace => {
+                        // Reset completion state when user modifies input
+                        self.completion_state.reset();
                         if self.cursor_position > 0 {
                             let mut chars: Vec<char> = self.current_input.chars().collect();
                             let cursor_pos = self.cursor_position.min(chars.len());
@@ -155,6 +167,8 @@ impl App {
                         }
                     }
                     KeyCode::Delete => {
+                        // Reset completion state when user modifies input
+                        self.completion_state.reset();
                         let chars: Vec<char> = self.current_input.chars().collect();
                         let cursor_pos = self.cursor_position.min(chars.len());
                         if cursor_pos < chars.len() {
@@ -241,6 +255,9 @@ impl App {
             return;
         }
 
+        // Reset completion state when user types new characters
+        self.completion_state.reset();
+
         let mut chars: Vec<char> = self.current_input.chars().collect();
         let cursor_pos = self.cursor_position.min(chars.len());
         chars.insert(cursor_pos, ch);
@@ -255,6 +272,38 @@ impl App {
         } else {
             self.show_command_list = false;
             self.command_filter.clear();
+        }
+    }
+
+    pub fn handle_tab_completion(&mut self) {
+        // If completion is already active, cycle to next completion
+        if self.completion_state.is_active {
+            if let Some(completed_text) = self.completion_state.cycle_next() {
+                self.current_input = completed_text;
+                self.cursor_position = self.current_input.chars().count();
+            }
+            return;
+        }
+
+        // Start new completion session
+        let completions = self.completion_engine.get_completions(
+            &self.current_input,
+            self.cursor_position,
+            &self.tasks,
+        );
+
+        if !completions.is_empty() {
+            let word_start = self
+                .completion_engine
+                .find_word_start(&self.current_input, self.cursor_position);
+            self.completion_state
+                .start(&self.current_input, completions, word_start);
+
+            // Apply first completion
+            if let Some(completed_text) = self.completion_state.cycle_next() {
+                self.current_input = completed_text;
+                self.cursor_position = self.current_input.chars().count();
+            }
         }
     }
 
