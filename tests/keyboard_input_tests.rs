@@ -108,7 +108,7 @@ mod key_handling {
         app.selected_command_index = 0;
 
         // Mock filtered commands (this would normally be populated by get_filtered_commands)
-        let _mock_filtered = vec!["/task".to_string()];
+        let _mock_filtered = ["/task".to_string()];
 
         // Since we can't easily mock get_filtered_commands, we'll test the behavior differently
         // by setting up a state where the command would be selected

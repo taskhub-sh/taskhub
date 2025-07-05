@@ -57,6 +57,16 @@ async fn run_app<B: ratatui::backend::Backend>(
 
         terminal.draw(|f| {
             let size = f.area();
+            app.set_terminal_area_height(size.height);
+
+            // Update layout areas for accurate mouse coordinate mapping
+            let command_list_size = if app.show_command_list {
+                app.get_filtered_commands().len().min(8) as u16 + 2
+            } else {
+                0
+            };
+            app.update_layout_areas(size.height, app.show_command_list, command_list_size);
+
             match app.mode {
                 AppMode::TaskList => {
                     let filtered_commands = app.get_filtered_commands();
@@ -70,6 +80,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                         selected_command_index: app.selected_command_index,
                         is_command_running: app.running_command.is_some(),
                         prompt: app.get_prompt(),
+                        selection_start: app.selection_start,
+                        selection_end: app.selection_end,
+                        input_selection_start: app.input_selection_start,
+                        input_selection_end: app.input_selection_end,
                     };
                     draw_task_list(f, size, &app.tasks, &state);
                 }
@@ -85,6 +99,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                         selected_command_index: app.selected_command_index,
                         is_command_running: app.running_command.is_some(),
                         prompt: app.get_prompt(),
+                        selection_start: app.selection_start,
+                        selection_end: app.selection_end,
+                        input_selection_start: app.input_selection_start,
+                        input_selection_end: app.input_selection_end,
                     };
                     draw_terminal(f, size, &state);
                 }
@@ -92,20 +110,41 @@ async fn run_app<B: ratatui::backend::Backend>(
         })?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                // Handle Ctrl-C to kill running commands
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    app.kill_running_command().await;
-                } else {
-                    match key.code {
-                        KeyCode::Char(c) => {
-                            app.on_key(c);
+            match event::read()? {
+                Event::Key(key) => {
+                    // Handle Ctrl-C to kill running commands
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        // Check if there's any text selection first
+                        if (app.selection_start.is_some() && app.selection_end.is_some())
+                            || (app.input_selection_start.is_some()
+                                && app.input_selection_end.is_some())
+                        {
+                            let _ = app.copy_selected_text();
+                        } else {
+                            app.kill_running_command().await;
                         }
-                        other_key => {
-                            app.on_key_code(other_key, key.modifiers);
+                    } else if key.code == KeyCode::Char('v')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        // Handle Ctrl-V for paste
+                        let _ = app.paste_from_clipboard();
+                    } else {
+                        match key.code {
+                            KeyCode::Char(c) => {
+                                app.on_key(c);
+                            }
+                            other_key => {
+                                app.on_key_code(other_key, key.modifiers);
+                            }
                         }
                     }
                 }
+                Event::Mouse(mouse) => {
+                    app.on_mouse_event(mouse);
+                }
+                _ => {}
             }
         }
 

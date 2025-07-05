@@ -17,10 +17,7 @@ mod settings_tests {
                 println!("Settings loaded successfully");
             }
             Err(e) => {
-                println!(
-                    "Settings loading failed (may be expected in test env): {}",
-                    e
-                );
+                println!("Settings loading failed (may be expected in test env): {e}");
                 // In test environment, this might fail due to missing config files
                 // This is acceptable for testing
             }
@@ -137,15 +134,13 @@ mod config_integration {
             if should_succeed {
                 assert!(
                     result.is_ok(),
-                    "Database init should succeed for path: {}",
-                    path_str
+                    "Database init should succeed for path: {path_str}"
                 );
             } else {
                 // File paths may fail in test environment, which is acceptable
                 if result.is_err() {
                     println!(
-                        "Database init failed as expected for path: {} (acceptable in test env)",
-                        path_str
+                        "Database init failed as expected for path: {path_str} (acceptable in test env)"
                     );
                 }
             }

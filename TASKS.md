@@ -33,7 +33,7 @@
   - Add a `/clear` command and Ctrl+L shortcut to clear the terminal screen while preserving command history. The clear should reset the display but maintain scroll history for users who want to scroll back.
 
 ### 7. Copy/Paste Support
-- [ ] **Add copy/paste functionality to terminal**
+- [x] **Add copy/paste functionality to terminal**
   - Implement text selection and copy/paste operations in the terminal. Support mouse selection of text, Ctrl+C to copy selected text, and Ctrl+V to paste. Handle clipboard operations across different platforms.
 
 ### 8. Auto-suggestions Based on History

@@ -20,7 +20,7 @@ mod database_initialization {
         let db_path = test_dir.join("test_taskhub.db");
 
         // Ensure the parent directory exists
-        if let Err(_) = std::fs::create_dir_all(&test_dir) {
+        if std::fs::create_dir_all(&test_dir).is_err() {
             // If we can't create directories, skip this test (CI environment)
             return;
         }
@@ -52,10 +52,7 @@ mod database_initialization {
                     return;
                 } else {
                     // Unexpected error - fail the test
-                    panic!(
-                        "Unexpected database file initialization error: {}",
-                        error_msg
-                    );
+                    panic!("Unexpected database file initialization error: {error_msg}");
                 }
             }
         }
