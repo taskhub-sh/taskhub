@@ -78,7 +78,7 @@ async fn test_mode_switching() {
     assert_eq!(app.mode, AppMode::Terminal);
 
     // Switch to TaskList mode via /task command
-    app.handle_builtin_command("/task");
+    app.handle_builtin_command("/task").await;
     assert_eq!(app.mode, AppMode::TaskList);
 
     // Switch back via keyboard in TaskList mode
@@ -92,7 +92,7 @@ async fn test_quit_functionality() {
 
     assert!(!app.should_quit);
 
-    app.handle_builtin_command("/quit");
+    app.handle_builtin_command("/quit").await;
     assert!(app.should_quit);
 }
 
@@ -103,7 +103,7 @@ async fn test_command_history() {
     assert_eq!(app.command_history.len(), 0);
 
     // Test help command adds to history
-    app.handle_builtin_command("/help");
+    app.handle_builtin_command("/help").await;
     assert_eq!(app.command_history.len(), 1);
 
     let entry = &app.command_history[0];
@@ -115,7 +115,6 @@ async fn test_command_history() {
     let manual_entry = CommandEntry {
         command: "test".to_string(),
         output: "test output".to_string(),
-        timestamp: "12:00:00".to_string(),
         success: true,
     };
     app.command_history.push(manual_entry);
@@ -134,7 +133,6 @@ async fn test_get_total_history_lines() {
     let entry1 = CommandEntry {
         command: "cmd1".to_string(),
         output: "single line".to_string(),
-        timestamp: "12:00:00".to_string(),
         success: true,
     };
     app.command_history.push(entry1);
@@ -146,7 +144,6 @@ async fn test_get_total_history_lines() {
     let entry2 = CommandEntry {
         command: "cmd2".to_string(),
         output: "line1\nline2\nline3".to_string(),
-        timestamp: "12:01:00".to_string(),
         success: false,
     };
     app.command_history.push(entry2);
@@ -164,7 +161,8 @@ mod task_operations {
         let mut app = create_test_app().await;
 
         // Test valid task add command
-        app.handle_task_add_command("/task add Test Task Title");
+        app.handle_task_add_command("/task add Test Task Title")
+            .await;
 
         // Should set pending task add and switch to TaskList mode
         assert!(app.pending_task_add.is_some());
@@ -182,7 +180,7 @@ mod task_operations {
         let mut app = create_test_app().await;
 
         // Test invalid task add command (no title)
-        app.handle_task_add_command("/task add");
+        app.handle_task_add_command("/task add").await;
 
         // Should not set pending task add
         assert!(app.pending_task_add.is_none());

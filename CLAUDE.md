@@ -38,7 +38,7 @@ TaskHub is a terminal-based task management system built in Rust with a modular,
 - SQLite database with `sqlx` for async operations
 - Core `Task` model with support for multiple sources (GitHub, Jira, GitLab, Markdown)
 - CRUD operations for task management
-- Database migrations in `src/db/migrations/`
+- Database migrations are implemented in `run_migration` in `src/db/mod.rs`. **Never** change the schema of existing tables, always use ALTER, DROP, etc modifiers for existing tables.
 
 **Terminal User Interface** (`src/tui/`):
 - Terminal-first interface with task list as secondary view
@@ -92,6 +92,7 @@ TaskHub is a terminal-based task management system built in Rust with a modular,
 - Command execution uses async process spawning
 
 **Testing Strategy**:
+- We are practicing *TDD* - Test Driven Development. It is recommended that before implementing a feature failing tests should be added and their failure should be observed, and only then implement the change and see the test pass.
 - Unit tests for core functionality
 - Integration tests for database operations
 - Test database containers for isolated testing
@@ -167,3 +168,7 @@ The terminal interface includes several built-in commands:
 ## Development Best Practices
 
 - Start each new task in a separate git feature branch named feature/&lt;description&gt;
+
+## Design Principles
+
+- Prefer to use the applications database for persistent storage when possible instead of additional files

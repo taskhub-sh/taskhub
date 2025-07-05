@@ -263,14 +263,12 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "test1".to_string(),
                 output: "output1".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
         app.command_history
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "test2".to_string(),
                 output: "output2".to_string(),
-                timestamp: "12:00:01".to_string(),
                 success: true,
             });
 
@@ -349,21 +347,18 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "ls".to_string(),
                 output: "file1.txt".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
         app.command_history
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "pwd".to_string(),
                 output: "/home/user".to_string(),
-                timestamp: "12:00:01".to_string(),
                 success: true,
             });
         app.command_history
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "echo hello".to_string(),
                 output: "hello".to_string(),
-                timestamp: "12:00:02".to_string(),
                 success: true,
             });
 
@@ -406,14 +401,12 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "ls".to_string(),
                 output: "file1.txt".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
         app.command_history
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "pwd".to_string(),
                 output: "/home/user".to_string(),
-                timestamp: "12:00:01".to_string(),
                 success: true,
             });
 
@@ -449,7 +442,6 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "ls -la".to_string(),
                 output: "files".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
 
@@ -480,7 +472,6 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "ls".to_string(),
                 output: "files".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
 
@@ -505,7 +496,6 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "ls".to_string(),
                 output: "files".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
 
@@ -530,7 +520,6 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "ls".to_string(),
                 output: "files".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
 
@@ -556,7 +545,6 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "ls".to_string(),
                 output: "files".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
 
@@ -602,14 +590,12 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "test1".to_string(),
                 output: "output1".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
         app.command_history
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "test2".to_string(),
                 output: "output2".to_string(),
-                timestamp: "12:00:01".to_string(),
                 success: true,
             });
 
@@ -661,7 +647,6 @@ mod key_handling {
             .push(taskhub::tui::views::terminal::CommandEntry {
                 command: "ls".to_string(),
                 output: "files".to_string(),
-                timestamp: "12:00:00".to_string(),
                 success: true,
             });
 
