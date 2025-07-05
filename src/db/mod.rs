@@ -26,7 +26,7 @@ pub async fn init_db(db_path: Option<PathBuf>) -> Result<SqlitePool, sqlx::Error
         }
     }
 
-    let pool = SqlitePool::connect(&db_url).await?;
+    let pool = SqlitePool::connect(&format!("{db_url}?mode=rwc")).await?;
 
     // Run migrations
     run_migrations(&pool).await?;
@@ -34,8 +34,7 @@ pub async fn init_db(db_path: Option<PathBuf>) -> Result<SqlitePool, sqlx::Error
     Ok(pool)
 }
 
-async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // Create the tasks table
+async fn run_migration_create_table_tasks(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS tasks (
@@ -53,6 +52,43 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             updated_at TEXT NOT NULL,
             custom_fields TEXT
         );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // Create the tasks table
+    run_migration_create_table_tasks(pool).await?;
+
+    // Handle command_history table migration
+    run_migration_migrate_command_history_table(pool).await?;
+
+    Ok(())
+}
+
+pub async fn run_migration_migrate_command_history_table(
+    pool: &SqlitePool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS command_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            command TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_command_history_created_at
+        ON command_history(created_at);
         "#,
     )
     .execute(pool)

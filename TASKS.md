@@ -13,11 +13,11 @@
 
 
 ### 2. Command History Navigation
-- [ ] **Implement arrow key command history navigation**
+- [x] **Implement arrow key command history navigation**
   - Add command history navigation using up/down arrow keys. When the user presses up arrow, replace the current input with the previous command from history. Down arrow should move forward through history. Preserve the current partial input when navigating.
 
 ### 3. Persistent Command History
-- [ ] **Implement persistent command history across sessions**
+- [x] **Implement persistent command history across sessions**
   - Save command history to disk and restore it when the application starts. Store history in a file within the user's data directory, with configurable history size limits. Include timestamps for each command.
 
 ### 4. Reverse History Search

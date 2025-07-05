@@ -11,14 +11,33 @@ use taskhub::tui::{cleanup_terminal, setup_terminal};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let settings = Settings::new()?;
+    let settings = Settings::new().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
     let db_path = settings.database_path.map(PathBuf::from);
-    let db_pool = init_db(db_path).await?;
+    let db_pool = init_db(db_path)
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
     let mut terminal = setup_terminal()?;
-    let mut app = App::new(db_pool);
-    app.load_tasks().await?;
-    run_app(&mut terminal, &mut app).await?;
+
+    // Create app with history manager if persistence is enabled
+    let mut app = if settings.history.persist {
+        App::new(db_pool.clone()).with_history_manager(Some(settings.history.max_entries))
+    } else {
+        App::new(db_pool)
+    };
+
+    // Load persistent history if enabled
+    app.load_persistent_history().await;
+    app.load_tasks()
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
+    let result = run_app(&mut terminal, &mut app).await;
+
+    // Save history before exiting
+    app.save_persistent_history().await;
+
     cleanup_terminal(&mut terminal)?;
+    result?;
     Ok(())
 }
 

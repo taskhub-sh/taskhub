@@ -15,7 +15,7 @@ mod builtin_commands {
     async fn test_handle_builtin_command_quit() {
         let mut app = create_test_app().await;
 
-        let result = app.handle_builtin_command("/quit");
+        let result = app.handle_builtin_command("/quit").await;
 
         assert!(result); // Should return true (command handled)
         assert!(app.should_quit);
@@ -26,7 +26,7 @@ mod builtin_commands {
         let mut app = create_test_app().await;
         assert_eq!(app.mode, AppMode::Terminal);
 
-        let result = app.handle_builtin_command("/task");
+        let result = app.handle_builtin_command("/task").await;
 
         assert!(result); // Should return true (command handled)
         assert_eq!(app.mode, AppMode::TaskList);
@@ -37,7 +37,7 @@ mod builtin_commands {
         let mut app = create_test_app().await;
         assert_eq!(app.mode, AppMode::Terminal);
 
-        let result = app.handle_builtin_command("/task list");
+        let result = app.handle_builtin_command("/task list").await;
 
         assert!(result); // Should return true (command handled)
         assert_eq!(app.mode, AppMode::TaskList);
@@ -47,7 +47,7 @@ mod builtin_commands {
     async fn test_handle_builtin_command_help() {
         let mut app = create_test_app().await;
 
-        let result = app.handle_builtin_command("/help");
+        let result = app.handle_builtin_command("/help").await;
 
         assert!(result); // Should return true (command handled)
         assert_eq!(app.command_history.len(), 1);
@@ -65,7 +65,7 @@ mod builtin_commands {
     async fn test_handle_builtin_command_task_add_valid() {
         let mut app = create_test_app().await;
 
-        let result = app.handle_builtin_command("/task add Hello World");
+        let result = app.handle_builtin_command("/task add Hello World").await;
 
         assert!(result); // Should return true (command handled)
         assert!(app.pending_task_add.is_some());
@@ -79,7 +79,7 @@ mod builtin_commands {
     async fn test_handle_builtin_command_task_add_invalid() {
         let mut app = create_test_app().await;
 
-        let result = app.handle_builtin_command("/task add");
+        let result = app.handle_builtin_command("/task add").await;
 
         assert!(result); // Should return true (command handled)
         assert!(app.pending_task_add.is_none());
@@ -95,7 +95,7 @@ mod builtin_commands {
     async fn test_handle_builtin_command_unknown() {
         let mut app = create_test_app().await;
 
-        let result = app.handle_builtin_command("/unknown");
+        let result = app.handle_builtin_command("/unknown").await;
 
         assert!(!result); // Should return false (command not handled)
         assert!(!app.should_quit);
@@ -107,7 +107,7 @@ mod builtin_commands {
     async fn test_handle_builtin_command_empty() {
         let mut app = create_test_app().await;
 
-        let result = app.handle_builtin_command("");
+        let result = app.handle_builtin_command("").await;
 
         assert!(!result); // Should return false (command not handled)
     }
@@ -116,7 +116,7 @@ mod builtin_commands {
     async fn test_handle_builtin_command_not_slash() {
         let mut app = create_test_app().await;
 
-        let result = app.handle_builtin_command("regular command");
+        let result = app.handle_builtin_command("regular command").await;
 
         assert!(!result); // Should return false (command not handled)
     }
@@ -125,7 +125,9 @@ mod builtin_commands {
     async fn test_handle_builtin_command_task_add_with_multiple_words() {
         let mut app = create_test_app().await;
 
-        let result = app.handle_builtin_command("/task add Fix the login bug in authentication");
+        let result = app
+            .handle_builtin_command("/task add Fix the login bug in authentication")
+            .await;
 
         assert!(result); // Should return true (command handled)
         assert!(app.pending_task_add.is_some());
@@ -138,8 +140,9 @@ mod builtin_commands {
     async fn test_handle_builtin_command_task_add_with_special_chars() {
         let mut app = create_test_app().await;
 
-        let result =
-            app.handle_builtin_command("/task add Update README.md with new info & examples");
+        let result = app
+            .handle_builtin_command("/task add Update README.md with new info & examples")
+            .await;
 
         assert!(result); // Should return true (command handled)
         assert!(app.pending_task_add.is_some());
@@ -276,7 +279,6 @@ mod command_execution {
             let entry = taskhub::tui::views::terminal::CommandEntry {
                 command: format!("echo {}", i),
                 output: format!("{}", i),
-                timestamp: chrono::Utc::now().format("%H:%M:%S").to_string(),
                 success: true,
             };
             app.command_history.push(entry);

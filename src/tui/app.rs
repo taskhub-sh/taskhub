@@ -1,8 +1,8 @@
 use crate::db::models::{Priority, Task, TaskSource, TaskStatus};
 use crate::db::operations;
+use crate::history::HistoryManager;
 use crate::tui::completion::{CompletionEngine, CompletionState};
 use crate::tui::views::terminal::CommandEntry;
-use chrono::Utc;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -21,6 +21,7 @@ pub struct App {
     pub tasks: Vec<Task>,
     pub mode: AppMode,
     pub command_history: Vec<CommandEntry>,
+    pub persistent_command_history: Vec<String>,
     pub current_input: String,
     pub cursor_position: usize,
     pub pending_command: Option<String>,
@@ -36,12 +37,12 @@ pub struct App {
     pub spinner_frame: usize,
     pub history_index: Option<usize>,
     pub saved_input: String,
+    pub history_manager: Option<HistoryManager>,
 }
 
 pub struct RunningCommand {
     pub command: String,
     pub child: Child,
-    pub timestamp: String,
 }
 
 impl App {
@@ -62,6 +63,7 @@ impl App {
             tasks: Vec::new(),
             mode: AppMode::Terminal,
             command_history: Vec::new(),
+            persistent_command_history: Vec::new(),
             current_input: String::new(),
             cursor_position: 0,
             pending_command: None,
@@ -77,12 +79,75 @@ impl App {
             spinner_frame: 0,
             history_index: None,
             saved_input: String::new(),
+            history_manager: None,
         }
+    }
+
+    pub fn with_history_manager(mut self, max_entries: Option<usize>) -> Self {
+        self.history_manager = Some(HistoryManager::new(self.db_pool.clone(), max_entries));
+        self
+    }
+
+    pub async fn load_persistent_history(&mut self) {
+        if let Some(ref history_manager) = self.history_manager {
+            self.persistent_command_history = history_manager.load_history().await;
+        }
+    }
+
+    pub async fn save_persistent_history(&self) {
+        if let Some(ref history_manager) = self.history_manager {
+            if let Err(e) = history_manager
+                .save_history(&self.persistent_command_history)
+                .await
+            {
+                eprintln!("Warning: Failed to save command history: {e}");
+            }
+        }
+    }
+
+    pub async fn append_to_persistent_history(&mut self, command: &str) {
+        if let Some(ref history_manager) = self.history_manager {
+            if let Err(e) = history_manager.append_command(command).await {
+                eprintln!("Warning: Failed to append to command history: {e}");
+            } else {
+                // Also add to local persistent history
+                self.persistent_command_history.push(command.to_string());
+                if self.persistent_command_history.len() > 1000 {
+                    self.persistent_command_history.drain(0..100);
+                }
+            }
+        }
+    }
+
+    /// Add an entry to command history and persist it if enabled
+    pub async fn add_command_entry(&mut self, entry: CommandEntry) {
+        // Add to current session history with full entry
+        self.command_history.push(entry.clone());
+
+        // Keep only the last 1000 commands in memory
+        if self.command_history.len() > 1000 {
+            self.command_history.drain(0..100);
+        }
+
+        // Persist only the command if history manager is enabled
+        self.append_to_persistent_history(&entry.command).await;
+
+        // Reset scroll to show newest entry
+        self.scroll_offset = 0;
     }
 
     pub async fn load_tasks(&mut self) -> Result<(), sqlx::Error> {
         self.tasks = operations::list_tasks(&self.db_pool).await?;
         Ok(())
+    }
+
+    /// Get combined history for navigation (persistent + current session)
+    fn get_combined_command_history(&self) -> Vec<String> {
+        let mut combined = self.persistent_command_history.clone();
+        for entry in &self.command_history {
+            combined.push(entry.command.clone());
+        }
+        combined
     }
 
     pub fn get_prompt(&self) -> &'static str {
@@ -257,7 +322,8 @@ impl App {
                             }
                         } else {
                             // Command history navigation
-                            if self.command_history.is_empty() {
+                            let combined_history = self.get_combined_command_history();
+                            if combined_history.is_empty() {
                                 return; // No history available
                             }
 
@@ -268,7 +334,7 @@ impl App {
 
                             // Navigate backward through history (older commands)
                             let new_index = match self.history_index {
-                                None => self.command_history.len() - 1,
+                                None => combined_history.len() - 1,
                                 Some(idx) => {
                                     if idx > 0 {
                                         idx - 1
@@ -279,7 +345,7 @@ impl App {
                             };
 
                             self.history_index = Some(new_index);
-                            self.current_input = self.command_history[new_index].command.clone();
+                            self.current_input = combined_history[new_index].clone();
                             self.cursor_position = self.current_input.chars().count();
                         }
                     }
@@ -300,12 +366,12 @@ impl App {
                         } else {
                             // Command history navigation
                             if let Some(idx) = self.history_index {
+                                let combined_history = self.get_combined_command_history();
                                 // Navigate forward through history (newer commands)
-                                if idx < self.command_history.len() - 1 {
+                                if idx < combined_history.len() - 1 {
                                     let new_index = idx + 1;
                                     self.history_index = Some(new_index);
-                                    self.current_input =
-                                        self.command_history[new_index].command.clone();
+                                    self.current_input = combined_history[new_index].clone();
                                     self.cursor_position = self.current_input.chars().count();
                                 } else {
                                     // Reached newest command, restore saved input
@@ -409,7 +475,7 @@ impl App {
     pub async fn handle_pending_commands(&mut self) {
         if let Some(command) = self.pending_command.take() {
             // Handle built-in commands first, then shell commands
-            if self.handle_builtin_command(&command) {
+            if self.handle_builtin_command(&command).await {
                 // Handle pending task add after built-in command processing
                 self.handle_pending_task_add().await;
                 return;
@@ -427,8 +493,6 @@ impl App {
             return;
         }
 
-        let timestamp = Utc::now().format("%H:%M:%S").to_string();
-
         let child = if cfg!(target_os = "windows") {
             match Command::new("cmd")
                 .args(["/C", &command])
@@ -441,11 +505,9 @@ impl App {
                     let entry = CommandEntry {
                         command,
                         output: format!("Error executing command: {e}"),
-                        timestamp,
                         success: false,
                     };
-                    self.command_history.push(entry);
-                    self.scroll_offset = 0;
+                    self.add_command_entry(entry).await;
                     return;
                 }
             }
@@ -461,11 +523,9 @@ impl App {
                     let entry = CommandEntry {
                         command,
                         output: format!("Error executing command: {e}"),
-                        timestamp,
                         success: false,
                     };
-                    self.command_history.push(entry);
-                    self.scroll_offset = 0;
+                    self.add_command_entry(entry).await;
                     return;
                 }
             }
@@ -475,18 +535,15 @@ impl App {
         self.running_command = Some(RunningCommand {
             command: command.clone(),
             child,
-            timestamp: timestamp.clone(),
         });
 
         // Add entry to show command started
         let entry = CommandEntry {
             command: command.clone(),
             output: "Running...".to_string(),
-            timestamp,
             success: true,
         };
-        self.command_history.push(entry);
-        self.scroll_offset = 0;
+        self.add_command_entry(entry).await;
     }
 
     pub async fn check_running_command(&mut self) {
@@ -523,11 +580,6 @@ impl App {
                             };
                             last_entry.success = success;
                         }
-                    }
-
-                    // Keep only the last 1000 commands
-                    if self.command_history.len() > 1000 {
-                        self.command_history.drain(0..100);
                     }
                 }
                 Ok(None) => {
@@ -615,7 +667,7 @@ impl App {
     }
 
     /// Handle built-in commands that don't need shell execution
-    pub fn handle_builtin_command(&mut self, command: &str) -> bool {
+    pub async fn handle_builtin_command(&mut self, command: &str) -> bool {
         match command {
             "/quit" => {
                 self.should_quit = true;
@@ -630,14 +682,13 @@ impl App {
                 let entry = CommandEntry {
                     command: command.to_string(),
                     output: help_text.to_string(),
-                    timestamp: chrono::Utc::now().format("%H:%M:%S").to_string(),
                     success: true,
                 };
-                self.command_history.push(entry);
+                self.add_command_entry(entry).await;
                 true
             }
             _ if command.starts_with("/task add") => {
-                self.handle_task_add_command(command);
+                self.handle_task_add_command(command).await;
                 true
             }
             _ => false,
@@ -645,16 +696,15 @@ impl App {
     }
 
     /// Handle /task add command
-    pub fn handle_task_add_command(&mut self, command: &str) {
+    pub async fn handle_task_add_command(&mut self, command: &str) {
         let parts: Vec<&str> = command.split_whitespace().collect();
         if parts.len() < 3 {
             let entry = CommandEntry {
                 command: command.to_string(),
                 output: "Usage: /task add <title>".to_string(),
-                timestamp: chrono::Utc::now().format("%H:%M:%S").to_string(),
                 success: false,
             };
-            self.command_history.push(entry);
+            self.add_command_entry(entry).await;
             return;
         }
 
@@ -688,29 +738,26 @@ impl App {
                     let entry = CommandEntry {
                         command: format!("/task add {}", task.title),
                         output: format!("Task '{}' added successfully", task.title),
-                        timestamp: chrono::Utc::now().format("%H:%M:%S").to_string(),
                         success: true,
                     };
-                    self.command_history.push(entry);
+                    self.add_command_entry(entry).await;
                     // Reload tasks to show the new task
                     if let Err(e) = self.load_tasks().await {
                         let error_entry = CommandEntry {
                             command: "reload_tasks".to_string(),
                             output: format!("Error reloading tasks: {e}"),
-                            timestamp: chrono::Utc::now().format("%H:%M:%S").to_string(),
                             success: false,
                         };
-                        self.command_history.push(error_entry);
+                        self.add_command_entry(error_entry).await;
                     }
                 }
                 Err(e) => {
                     let entry = CommandEntry {
                         command: format!("/task add {}", task.title),
                         output: format!("Error adding task: {e}"),
-                        timestamp: chrono::Utc::now().format("%H:%M:%S").to_string(),
                         success: false,
                     };
-                    self.command_history.push(entry);
+                    self.add_command_entry(entry).await;
                 }
             }
         }

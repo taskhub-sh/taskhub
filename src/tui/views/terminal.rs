@@ -10,7 +10,6 @@ use ratatui::{
 pub struct CommandEntry {
     pub command: String,
     pub output: String,
-    pub timestamp: String,
     pub success: bool,
 }
 
@@ -98,10 +97,7 @@ fn draw_command_history(
         };
 
         all_items.push(ListItem::new(Line::from(vec![
-            Span::styled(
-                format!("{}> ", entry.timestamp),
-                Style::default().fg(Color::Cyan),
-            ),
+            Span::styled("> ", Style::default().fg(Color::Cyan)),
             Span::styled(&entry.command, command_style),
         ])));
 

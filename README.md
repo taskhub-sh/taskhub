@@ -67,7 +67,6 @@ src/
 ├── db/                  # Database layer
 │   ├── mod.rs
 │   ├── models.rs       # Data models
-│   ├── migrations/     # Database migrations
 │   └── operations.rs   # CRUD operations
 ├── integrations/        # External service integrations
 │   ├── mod.rs

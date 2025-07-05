@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: true
 ---
 # TaskHub Development Rules
@@ -45,7 +45,6 @@ src/
 ├── db/                  # Database layer
 │   ├── mod.rs
 │   ├── models.rs       # Data models
-│   ├── migrations/     # Database migrations
 │   └── operations.rs   # CRUD operations
 ├── integrations/        # External service integrations
 │   ├── mod.rs
@@ -211,4 +210,4 @@ pub async fn handle_tasks_command(args: TasksArgs) -> Result<()> {
 /config set github.token
 ```
 
-Remember: We're building the foundation for a powerful developer tool. Every decision should prioritize developer experience, performance, and reliability. 
+Remember: We're building the foundation for a powerful developer tool. Every decision should prioritize developer experience, performance, and reliability.
