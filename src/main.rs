@@ -83,7 +83,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.on_key(c);
                         }
                         other_key => {
-                            app.on_key_code(other_key);
+                            app.on_key_code(other_key, key.modifiers);
                         }
                     }
                 }
