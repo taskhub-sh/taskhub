@@ -151,7 +151,8 @@ fn draw_command_history(
     let scroll_info = if scroll_offset > 0 {
         format!("Terminal Output (↑{scroll_offset} lines scrolled)")
     } else if total_items > available_height {
-        "Terminal Output (Use ↑↓ to scroll, Home/End for top/bottom)".to_string()
+        "Terminal Output (Use Shift+↑↓ to scroll, ↑↓ for history, Home/End for top/bottom)"
+            .to_string()
     } else {
         "Terminal Output".to_string()
     };

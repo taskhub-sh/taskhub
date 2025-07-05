@@ -34,6 +34,8 @@ pub struct App {
     pub completion_state: CompletionState,
     pub running_command: Option<RunningCommand>,
     pub spinner_frame: usize,
+    pub history_index: Option<usize>,
+    pub saved_input: String,
 }
 
 pub struct RunningCommand {
@@ -73,6 +75,8 @@ impl App {
             completion_state: CompletionState::new(),
             running_command: None,
             spinner_frame: 0,
+            history_index: None,
+            saved_input: String::new(),
         }
     }
 
@@ -112,8 +116,12 @@ impl App {
         }
     }
 
-    pub fn on_key_code(&mut self, key_code: crossterm::event::KeyCode) {
-        use crossterm::event::KeyCode;
+    pub fn on_key_code(
+        &mut self,
+        key_code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) {
+        use crossterm::event::{KeyCode, KeyModifiers};
 
         // Handle Ctrl-C for killing running commands
         if key_code == KeyCode::Char('c') {
@@ -157,6 +165,7 @@ impl App {
                                         self.selected_command_index = 0;
                                         self.pending_command = Some(command);
                                         self.scroll_offset = 0;
+                                        self.reset_history_navigation();
                                     }
                                 } else {
                                     // Select the currently highlighted command from list
@@ -181,6 +190,7 @@ impl App {
                                     self.cursor_position = 0;
                                     self.pending_command = Some(command);
                                     self.scroll_offset = 0;
+                                    self.reset_history_navigation();
                                 }
                             }
                         }
@@ -191,6 +201,8 @@ impl App {
                     KeyCode::Backspace => {
                         // Reset completion state when user modifies input
                         self.completion_state.reset();
+                        // Reset command history navigation when user modifies input
+                        self.reset_history_navigation();
                         if self.cursor_position > 0 {
                             let mut chars: Vec<char> = self.current_input.chars().collect();
                             let cursor_pos = self.cursor_position.min(chars.len());
@@ -207,6 +219,8 @@ impl App {
                     KeyCode::Delete => {
                         // Reset completion state when user modifies input
                         self.completion_state.reset();
+                        // Reset command history navigation when user modifies input
+                        self.reset_history_navigation();
                         let chars: Vec<char> = self.current_input.chars().collect();
                         let cursor_pos = self.cursor_position.min(chars.len());
                         if cursor_pos < chars.len() {
@@ -230,21 +244,52 @@ impl App {
                         }
                     }
                     KeyCode::Up => {
-                        if self.show_command_list {
-                            // Navigate up in command list
-                            if self.selected_command_index > 0 {
-                                self.selected_command_index -= 1;
-                            }
-                        } else if self.current_input.is_empty() {
-                            // Scroll up through history (show older content)
+                        if modifiers.contains(KeyModifiers::SHIFT) {
+                            // Shift+Up: Scroll up through history (show older content)
                             let max_scroll = self.get_total_history_lines().saturating_sub(1);
                             if self.scroll_offset < max_scroll {
                                 self.scroll_offset += 1;
                             }
+                        } else if self.show_command_list {
+                            // Navigate up in command list
+                            if self.selected_command_index > 0 {
+                                self.selected_command_index -= 1;
+                            }
+                        } else {
+                            // Command history navigation
+                            if self.command_history.is_empty() {
+                                return; // No history available
+                            }
+
+                            // Save current input if we haven't started navigating history yet
+                            if self.history_index.is_none() {
+                                self.saved_input = self.current_input.clone();
+                            }
+
+                            // Navigate backward through history (older commands)
+                            let new_index = match self.history_index {
+                                None => self.command_history.len() - 1,
+                                Some(idx) => {
+                                    if idx > 0 {
+                                        idx - 1
+                                    } else {
+                                        return; // Already at oldest command
+                                    }
+                                }
+                            };
+
+                            self.history_index = Some(new_index);
+                            self.current_input = self.command_history[new_index].command.clone();
+                            self.cursor_position = self.current_input.chars().count();
                         }
                     }
                     KeyCode::Down => {
-                        if self.show_command_list {
+                        if modifiers.contains(KeyModifiers::SHIFT) {
+                            // Shift+Down: Scroll down through history (show newer content)
+                            if self.scroll_offset > 0 {
+                                self.scroll_offset -= 1;
+                            }
+                        } else if self.show_command_list {
                             // Navigate down in command list
                             let filtered_commands = self.get_filtered_commands();
                             if self.selected_command_index
@@ -252,9 +297,23 @@ impl App {
                             {
                                 self.selected_command_index += 1;
                             }
-                        } else if self.current_input.is_empty() && self.scroll_offset > 0 {
-                            // Scroll down through history (show newer content)
-                            self.scroll_offset -= 1;
+                        } else {
+                            // Command history navigation
+                            if let Some(idx) = self.history_index {
+                                // Navigate forward through history (newer commands)
+                                if idx < self.command_history.len() - 1 {
+                                    let new_index = idx + 1;
+                                    self.history_index = Some(new_index);
+                                    self.current_input =
+                                        self.command_history[new_index].command.clone();
+                                    self.cursor_position = self.current_input.chars().count();
+                                } else {
+                                    // Reached newest command, restore saved input
+                                    self.history_index = None;
+                                    self.current_input = self.saved_input.clone();
+                                    self.cursor_position = self.current_input.chars().count();
+                                }
+                            }
                         }
                     }
                     KeyCode::PageUp => {
@@ -295,6 +354,8 @@ impl App {
 
         // Reset completion state when user types new characters
         self.completion_state.reset();
+        // Reset command history navigation when user starts typing
+        self.reset_history_navigation();
 
         let mut chars: Vec<char> = self.current_input.chars().collect();
         let cursor_pos = self.cursor_position.min(chars.len());
@@ -653,5 +714,11 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Reset command history navigation state
+    fn reset_history_navigation(&mut self) {
+        self.history_index = None;
+        self.saved_input.clear();
     }
 }
