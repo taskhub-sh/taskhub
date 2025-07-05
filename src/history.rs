@@ -42,11 +42,6 @@ impl HistoryManager {
     }
 
     pub async fn save_history(&self, history: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-        // Clear existing history first
-        sqlx::query("DELETE FROM command_history")
-            .execute(&self.db_pool)
-            .await?;
-
         // Insert entries (limit to max_entries)
         let entries_to_save = if history.len() > self.max_entries {
             &history[history.len() - self.max_entries..]
@@ -54,17 +49,29 @@ impl HistoryManager {
             history
         };
 
-        for command in entries_to_save {
-            sqlx::query(
-                r#"
-                INSERT INTO command_history (command)
-                VALUES (?)
-            "#,
-            )
-            .bind(command)
-            .execute(&self.db_pool)
+        // Use a transaction for atomic operations and better performance
+        let mut tx = self.db_pool.begin().await?;
+
+        // Clear existing history first
+        sqlx::query("DELETE FROM command_history")
+            .execute(&mut *tx)
             .await?;
+
+        // Build a bulk insert query
+        if !entries_to_save.is_empty() {
+            let placeholders = "(?)".repeat(entries_to_save.len()).replace(")(", "),(");
+            let query = format!("INSERT INTO command_history (command) VALUES {placeholders}");
+
+            let mut query_builder = sqlx::query(&query);
+            for command in entries_to_save {
+                query_builder = query_builder.bind(command);
+            }
+
+            query_builder.execute(&mut *tx).await?;
         }
+
+        // Commit the transaction
+        tx.commit().await?;
 
         Ok(())
     }
