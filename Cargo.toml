@@ -21,3 +21,4 @@ thiserror = "*"
 uuid = { version = "*", features = ["v4", "serde"] }
 dirs = "*"
 chrono = { version = "*", features = ["serde"] }
+arboard = { version = "*", features = ["wayland-data-control"] }

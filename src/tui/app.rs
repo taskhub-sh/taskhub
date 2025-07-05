@@ -38,6 +38,17 @@ pub struct App {
     pub history_index: Option<usize>,
     pub saved_input: String,
     pub history_manager: Option<HistoryManager>,
+    pub selection_start: Option<(usize, usize)>,
+    pub selection_end: Option<(usize, usize)>,
+    pub is_selecting: bool,
+    pub input_selection_start: Option<usize>,
+    pub input_selection_end: Option<usize>,
+    pub is_selecting_input: bool,
+    pub terminal_area_height: u16,
+    pub clipboard: Option<arboard::Clipboard>,
+    pub history_area_start: u16,
+    pub history_area_height: u16,
+    pub input_area_start: u16,
 }
 
 pub struct RunningCommand {
@@ -80,6 +91,17 @@ impl App {
             history_index: None,
             saved_input: String::new(),
             history_manager: None,
+            selection_start: None,
+            selection_end: None,
+            is_selecting: false,
+            input_selection_start: None,
+            input_selection_end: None,
+            is_selecting_input: false,
+            terminal_area_height: 24,
+            clipboard: None,
+            history_area_start: 0,
+            history_area_height: 21,
+            input_area_start: 21,
         }
     }
 
@@ -767,5 +789,402 @@ impl App {
     fn reset_history_navigation(&mut self) {
         self.history_index = None;
         self.saved_input.clear();
+    }
+
+    /// Start text selection at the given position
+    pub fn start_selection(&mut self, line: usize, col: usize) {
+        self.selection_start = Some((line, col));
+        self.selection_end = Some((line, col));
+        self.is_selecting = true;
+    }
+
+    /// Update text selection end position
+    pub fn update_selection(&mut self, line: usize, col: usize) {
+        if self.is_selecting {
+            self.selection_end = Some((line, col));
+        }
+    }
+
+    /// End text selection
+    pub fn end_selection(&mut self) {
+        self.is_selecting = false;
+    }
+
+    /// Clear text selection
+    pub fn clear_selection(&mut self) {
+        self.selection_start = None;
+        self.selection_end = None;
+        self.is_selecting = false;
+    }
+
+    /// Clear input selection
+    pub fn clear_input_selection(&mut self) {
+        self.input_selection_start = None;
+        self.input_selection_end = None;
+        self.is_selecting_input = false;
+    }
+
+    /// Start input text selection
+    pub fn start_input_selection(&mut self, pos: usize) {
+        self.input_selection_start = Some(pos);
+        self.input_selection_end = Some(pos);
+        self.is_selecting_input = true;
+    }
+
+    /// Update input text selection
+    pub fn update_input_selection(&mut self, pos: usize) {
+        if self.is_selecting_input {
+            self.input_selection_end = Some(pos);
+        }
+    }
+
+    /// End input text selection
+    pub fn end_input_selection(&mut self) {
+        self.is_selecting_input = false;
+    }
+
+    /// Get selected text from terminal history
+    pub fn get_selected_text(&self) -> Option<String> {
+        if let (Some(start), Some(end)) = (self.selection_start, self.selection_end) {
+            // Ensure start is before end
+            let (start_line, start_col) =
+                if start.0 <= end.0 || (start.0 == end.0 && start.1 <= end.1) {
+                    start
+                } else {
+                    end
+                };
+            let (end_line, end_col) = if start.0 <= end.0 || (start.0 == end.0 && start.1 <= end.1)
+            {
+                end
+            } else {
+                start
+            };
+
+            // Convert command history to lines
+            let mut lines = Vec::new();
+            for entry in &self.command_history {
+                lines.push(format!("> {}", entry.command));
+                if !entry.output.is_empty() {
+                    for line in entry.output.lines() {
+                        lines.push(line.to_string());
+                    }
+                }
+                lines.push(String::new()); // Empty line for spacing
+            }
+
+            // Extract selected text
+            let mut selected_text = String::new();
+            for line_idx in start_line..=end_line.min(lines.len().saturating_sub(1)) {
+                if line_idx < lines.len() {
+                    let line = &lines[line_idx];
+                    if line_idx == start_line && line_idx == end_line {
+                        // Single line selection
+                        let start_pos = start_col.min(line.len());
+                        let end_pos = end_col.min(line.len());
+                        if start_pos < end_pos {
+                            selected_text.push_str(&line[start_pos..end_pos]);
+                        }
+                    } else if line_idx == start_line {
+                        // First line of multi-line selection
+                        let start_pos = start_col.min(line.len());
+                        if start_pos < line.len() {
+                            selected_text.push_str(&line[start_pos..]);
+                        }
+                        selected_text.push('\n');
+                    } else if line_idx == end_line {
+                        // Last line of multi-line selection
+                        let end_pos = end_col.min(line.len());
+                        if end_pos > 0 {
+                            selected_text.push_str(&line[..end_pos]);
+                        }
+                    } else {
+                        // Middle lines
+                        selected_text.push_str(line);
+                        selected_text.push('\n');
+                    }
+                }
+            }
+
+            if !selected_text.is_empty() {
+                Some(selected_text)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Get selected input text
+    pub fn get_selected_input_text(&self) -> Option<String> {
+        if let (Some(start), Some(end)) = (self.input_selection_start, self.input_selection_end) {
+            let chars: Vec<char> = self.current_input.chars().collect();
+            let start_pos = start.min(end).min(chars.len());
+            let end_pos = start.max(end).min(chars.len());
+
+            if start_pos < end_pos {
+                Some(chars[start_pos..end_pos].iter().collect())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Copy selected text to clipboard (handles both terminal and input text)
+    pub fn copy_selected_text(&mut self) -> Result<(), String> {
+        let text_to_copy = if let Some(input_text) = self.get_selected_input_text() {
+            Some(input_text)
+        } else {
+            self.get_selected_text()
+        };
+
+        if let Some(text) = text_to_copy {
+            // Initialize clipboard if not already done
+            if self.clipboard.is_none() {
+                match arboard::Clipboard::new() {
+                    Ok(clipboard) => self.clipboard = Some(clipboard),
+                    Err(_) => return Err("Failed to access clipboard".to_string()),
+                }
+            }
+
+            // Use the persistent clipboard instance
+            if let Some(ref mut clipboard) = self.clipboard {
+                match clipboard.set_text(&text) {
+                    Ok(_) => {
+                        // Keep the clipboard instance alive and add a delay
+                        // to ensure clipboard managers can register the content.
+                        // This solves the "Clipboard was dropped very quickly" issue
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+
+                        self.clear_selection();
+                        self.clear_input_selection();
+                        Ok(())
+                    }
+                    Err(_) => Err("Failed to set clipboard contents".to_string()),
+                }
+            } else {
+                Err("Failed to access clipboard".to_string())
+            }
+        } else {
+            Err("No text selected".to_string())
+        }
+    }
+
+    /// Paste text from clipboard
+    pub fn paste_from_clipboard(&mut self) -> Result<(), String> {
+        // Initialize clipboard if not already done
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(clipboard) => self.clipboard = Some(clipboard),
+                Err(_) => return Err("Failed to access clipboard".to_string()),
+            }
+        }
+
+        // Use the persistent clipboard instance
+        if let Some(ref mut clipboard) = self.clipboard {
+            match clipboard.get_text() {
+                Ok(text) => {
+                    // Insert text at current cursor position
+                    let mut chars: Vec<char> = self.current_input.chars().collect();
+                    let cursor_pos = self.cursor_position.min(chars.len());
+
+                    // Insert clipboard text character by character
+                    let mut char_count = 0;
+                    for ch in text.chars() {
+                        // Skip newlines and other control characters for single-line input
+                        if ch.is_control() && ch != '\t' {
+                            continue;
+                        }
+                        chars.insert(cursor_pos + char_count, ch);
+                        char_count += 1;
+                    }
+
+                    self.current_input = chars.into_iter().collect();
+                    self.cursor_position = cursor_pos + char_count;
+
+                    Ok(())
+                }
+                Err(_) => Err("Failed to get clipboard contents".to_string()),
+            }
+        } else {
+            Err("Failed to access clipboard".to_string())
+        }
+    }
+
+    /// Update terminal area height
+    pub fn set_terminal_area_height(&mut self, height: u16) {
+        self.terminal_area_height = height;
+    }
+
+    /// Update layout areas for proper mouse coordinate mapping
+    pub fn update_layout_areas(
+        &mut self,
+        total_height: u16,
+        show_command_list: bool,
+        command_list_size: u16,
+    ) {
+        self.terminal_area_height = total_height;
+
+        if show_command_list {
+            // Three-area layout: history, command list, input
+            self.history_area_start = 0;
+            self.history_area_height = total_height.saturating_sub(command_list_size + 3);
+            self.input_area_start = total_height.saturating_sub(3);
+        } else {
+            // Two-area layout: history, input
+            self.history_area_start = 0;
+            self.history_area_height = total_height.saturating_sub(3);
+            self.input_area_start = total_height.saturating_sub(3);
+        }
+    }
+
+    /// Handle mouse events with proper coordinate mapping
+    pub fn on_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
+        use crossterm::event::{MouseButton, MouseEventKind};
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let mouse_row = mouse.row;
+
+                // Determine which area was clicked
+                if mouse_row >= self.input_area_start {
+                    // Clicked in input area - start input selection
+                    let input_pos = self.mouse_col_to_input_pos(mouse.column as usize);
+                    self.clear_selection(); // Clear any terminal selection
+                    self.start_input_selection(input_pos);
+                } else if mouse_row >= self.history_area_start {
+                    // Clicked in terminal history area
+                    self.clear_input_selection(); // Clear any input selection
+
+                    // Map mouse coordinates to visible content line
+                    let content_row = self.map_mouse_to_content_line(mouse_row, mouse.column);
+                    if let Some((line, col)) = content_row {
+                        self.start_selection(line, col);
+                    }
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let mouse_row = mouse.row;
+
+                if mouse_row >= self.input_area_start {
+                    // Dragging in input area
+                    if self.is_selecting_input {
+                        let input_pos = self.mouse_col_to_input_pos(mouse.column as usize);
+                        self.update_input_selection(input_pos);
+                    }
+                } else if mouse_row >= self.history_area_start {
+                    // Dragging in terminal history area
+                    if self.is_selecting {
+                        let content_row = self.map_mouse_to_content_line(mouse_row, mouse.column);
+                        if let Some((line, col)) = content_row {
+                            self.update_selection(line, col);
+                        }
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                // End selection and automatically copy
+                if self.is_selecting || self.is_selecting_input {
+                    self.end_selection();
+                    self.end_input_selection();
+
+                    // Automatically copy selected text
+                    let _ = self.copy_selected_text();
+                }
+            }
+            MouseEventKind::Down(MouseButton::Middle) => {
+                // Middle mouse button paste
+                let _ = self.paste_from_clipboard();
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                // Right click - clear all selections
+                self.clear_selection();
+                self.clear_input_selection();
+            }
+            _ => {}
+        }
+    }
+
+    /// Convert mouse column to input position accounting for prompt and borders
+    pub fn mouse_col_to_input_pos(&self, mouse_col: usize) -> usize {
+        // Account for left border (1 char) and prompt
+        let border_offset = 1;
+        let prompt_len = self.get_prompt().len() + 1; // +1 for space after prompt
+        let total_offset = border_offset + prompt_len;
+
+        if mouse_col > total_offset {
+            (mouse_col - total_offset).min(self.current_input.chars().count())
+        } else {
+            0
+        }
+    }
+
+    /// Map mouse coordinates to actual content line accounting for scroll and visible area
+    pub fn map_mouse_to_content_line(
+        &self,
+        mouse_row: u16,
+        mouse_col: u16,
+    ) -> Option<(usize, usize)> {
+        // Calculate which line in the visible area was clicked
+        let history_relative_row = mouse_row - self.history_area_start;
+
+        // Account for top border - the first visible row is the border
+        if history_relative_row == 0 {
+            return None; // Clicked on border
+        }
+
+        let visible_line_index = (history_relative_row - 1) as usize; // -1 for top border
+
+        // Now we need to map this visible line back to the actual content line
+        // This requires reproducing the same logic as in draw_command_history
+
+        // First, build the same all_items structure to understand the mapping
+        let mut all_items_count = 0;
+        for entry in &self.command_history {
+            // Command line
+            all_items_count += 1;
+
+            // Output lines
+            if !entry.output.is_empty() {
+                all_items_count += entry.output.lines().count();
+            }
+
+            // Empty line for spacing
+            all_items_count += 1;
+        }
+
+        // Calculate available height (same as in draw_command_history)
+        let available_height = self.history_area_height.saturating_sub(2) as usize; // -2 for borders
+
+        // Calculate which items are visible (same logic as in draw_command_history)
+        let visible_start_index = if all_items_count <= available_height {
+            0 // All items fit
+        } else {
+            // Need to scroll - show from bottom up with offset
+            if self.scroll_offset >= all_items_count {
+                0
+            } else {
+                all_items_count.saturating_sub(available_height + self.scroll_offset)
+            }
+        };
+
+        // The actual content line is the visible line index plus the start offset
+        let content_line = visible_start_index + visible_line_index;
+
+        // Make sure we don't go beyond the actual content
+        if content_line >= all_items_count {
+            return None;
+        }
+
+        // Account for left border in column
+        let content_col = if mouse_col > 0 {
+            (mouse_col - 1) as usize
+        } else {
+            0
+        };
+
+        Some((content_line, content_col))
     }
 }

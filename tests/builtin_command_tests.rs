@@ -277,8 +277,8 @@ mod command_execution {
         // Manually add many command entries to test history limit without spawning processes
         for i in 0..1005 {
             let entry = taskhub::tui::views::terminal::CommandEntry {
-                command: format!("echo {}", i),
-                output: format!("{}", i),
+                command: format!("echo {i}"),
+                output: format!("{i}"),
                 success: true,
             };
             app.command_history.push(entry);

@@ -23,6 +23,10 @@ pub struct TerminalDisplayState<'a> {
     pub selected_command_index: usize,
     pub is_command_running: bool,
     pub prompt: &'a str,
+    pub selection_start: Option<(usize, usize)>,
+    pub selection_end: Option<(usize, usize)>,
+    pub input_selection_start: Option<usize>,
+    pub input_selection_end: Option<usize>,
 }
 
 pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState<'_>) {
@@ -38,7 +42,14 @@ pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState
             .split(area);
 
         // Command history area
-        draw_command_history(f, chunks[0], state.command_history, state.scroll_offset);
+        draw_command_history(
+            f,
+            chunks[0],
+            state.command_history,
+            state.scroll_offset,
+            state.selection_start,
+            state.selection_end,
+        );
 
         // Command list area
         draw_command_list(
@@ -49,14 +60,7 @@ pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState
         );
 
         // Input area
-        draw_input_box(
-            f,
-            chunks[2],
-            state.current_input,
-            state.cursor_position,
-            state.is_command_running,
-            state.prompt,
-        );
+        draw_input_box(f, chunks[2], state);
     } else {
         // Normal two-area layout
         let chunks = Layout::default()
@@ -65,17 +69,17 @@ pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState
             .split(area);
 
         // Command history area
-        draw_command_history(f, chunks[0], state.command_history, state.scroll_offset);
+        draw_command_history(
+            f,
+            chunks[0],
+            state.command_history,
+            state.scroll_offset,
+            state.selection_start,
+            state.selection_end,
+        );
 
         // Input area
-        draw_input_box(
-            f,
-            chunks[1],
-            state.current_input,
-            state.cursor_position,
-            state.is_command_running,
-            state.prompt,
-        );
+        draw_input_box(f, chunks[1], state);
     }
 }
 
@@ -84,9 +88,24 @@ fn draw_command_history(
     area: Rect,
     command_history: &[CommandEntry],
     scroll_offset: usize,
+    selection_start: Option<(usize, usize)>,
+    selection_end: Option<(usize, usize)>,
 ) {
     // Create all history items first
     let mut all_items = Vec::new();
+    let mut line_index = 0;
+
+    // Determine selection bounds
+    let selection_bounds = if let (Some(start), Some(end)) = (selection_start, selection_end) {
+        // Ensure start is before end
+        if start.0 <= end.0 || (start.0 == end.0 && start.1 <= end.1) {
+            Some((start, end))
+        } else {
+            Some((end, start))
+        }
+    } else {
+        None
+    };
 
     for entry in command_history.iter() {
         // Add command line
@@ -96,10 +115,44 @@ fn draw_command_history(
             Style::default().fg(Color::Red)
         };
 
-        all_items.push(ListItem::new(Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Cyan)),
-            Span::styled(&entry.command, command_style),
-        ])));
+        // Check if this line is selected
+        let line_item =
+            if let Some(((start_line, start_col), (end_line, end_col))) = selection_bounds {
+                if line_index >= start_line && line_index <= end_line {
+                    // This line is within selection
+                    let command_text = format!("> {}", entry.command);
+                    if line_index == start_line && line_index == end_line {
+                        // Single line selection
+                        create_selected_line(command_text, start_col, end_col, command_style)
+                    } else if line_index == start_line {
+                        // Start of multi-line selection
+                        let len = command_text.len();
+                        create_selected_line(command_text, start_col, len, command_style)
+                    } else if line_index == end_line {
+                        // End of multi-line selection
+                        create_selected_line(command_text, 0, end_col, command_style)
+                    } else {
+                        // Fully selected line
+                        let len = command_text.len();
+                        create_selected_line(command_text, 0, len, command_style)
+                    }
+                } else {
+                    // Not selected
+                    ListItem::new(Line::from(vec![
+                        Span::styled("> ", Style::default().fg(Color::Cyan)),
+                        Span::styled(&entry.command, command_style),
+                    ]))
+                }
+            } else {
+                // No selection
+                ListItem::new(Line::from(vec![
+                    Span::styled("> ", Style::default().fg(Color::Cyan)),
+                    Span::styled(&entry.command, command_style),
+                ]))
+            };
+
+        all_items.push(line_item);
+        line_index += 1;
 
         // Add output lines
         if !entry.output.is_empty() {
@@ -110,12 +163,44 @@ fn draw_command_history(
             };
 
             for line in entry.output.lines() {
-                all_items.push(ListItem::new(Line::from(Span::styled(line, output_style))));
+                // Check if this line is selected
+                let line_item = if let Some(((start_line, start_col), (end_line, end_col))) =
+                    selection_bounds
+                {
+                    if line_index >= start_line && line_index <= end_line {
+                        // This line is within selection
+                        if line_index == start_line && line_index == end_line {
+                            // Single line selection
+                            create_selected_line(line.to_string(), start_col, end_col, output_style)
+                        } else if line_index == start_line {
+                            // Start of multi-line selection
+                            let len = line.len();
+                            create_selected_line(line.to_string(), start_col, len, output_style)
+                        } else if line_index == end_line {
+                            // End of multi-line selection
+                            create_selected_line(line.to_string(), 0, end_col, output_style)
+                        } else {
+                            // Fully selected line
+                            let len = line.len();
+                            create_selected_line(line.to_string(), 0, len, output_style)
+                        }
+                    } else {
+                        // Not selected
+                        ListItem::new(Line::from(Span::styled(line, output_style)))
+                    }
+                } else {
+                    // No selection
+                    ListItem::new(Line::from(Span::styled(line, output_style)))
+                };
+
+                all_items.push(line_item);
+                line_index += 1;
             }
         }
 
         // Add empty line for spacing
         all_items.push(ListItem::new(Line::from("")));
+        line_index += 1;
     }
 
     // Calculate available height (subtract 2 for borders)
@@ -192,48 +277,28 @@ fn draw_command_list(
     f.render_widget(list, area);
 }
 
-fn draw_input_box(
-    f: &mut Frame<'_>,
-    area: Rect,
-    current_input: &str,
-    cursor_position: usize,
-    is_command_running: bool,
-    prompt: &str,
-) {
-    let chars: Vec<char> = current_input.chars().collect();
-    let cursor_pos = cursor_position.min(chars.len());
+fn draw_input_box(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState<'_>) {
+    let chars: Vec<char> = state.current_input.chars().collect();
+    let cursor_pos = state.cursor_position.min(chars.len());
 
-    let prompt_style = if is_command_running {
+    let prompt_style = if state.is_command_running {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::Green)
     };
 
-    let input_text = if cursor_pos < chars.len() {
-        let before_cursor: String = chars[..cursor_pos].iter().collect();
-        let cursor_char = chars[cursor_pos];
-        let after_cursor: String = chars[(cursor_pos + 1)..].iter().collect();
+    let input_text = create_input_line_with_selection(
+        state.prompt,
+        prompt_style,
+        &chars,
+        cursor_pos,
+        state.input_selection_start,
+        state.input_selection_end,
+    );
 
-        Line::from(vec![
-            Span::styled(format!("{prompt} "), prompt_style),
-            Span::raw(before_cursor),
-            Span::styled(
-                cursor_char.to_string(),
-                Style::default().bg(Color::White).fg(Color::Black),
-            ),
-            Span::raw(after_cursor),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(format!("{prompt} "), prompt_style),
-            Span::raw(current_input),
-            Span::styled(" ", Style::default().bg(Color::White)),
-        ])
-    };
-
-    let title = if is_command_running {
+    let title = if state.is_command_running {
         "Command Input (Command running... Press Ctrl-C to stop)"
-    } else if current_input.starts_with('/') {
+    } else if state.current_input.starts_with('/') {
         "Command Input (Type to filter commands)"
     } else {
         "Command Input (Type / for commands, /quit to exit)"
@@ -247,4 +312,108 @@ fn draw_input_box(
     );
 
     f.render_widget(input, area);
+}
+
+fn create_selected_line(
+    text: String,
+    start_col: usize,
+    end_col: usize,
+    base_style: Style,
+) -> ListItem<'static> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut spans = Vec::new();
+
+    // Add text before selection
+    if start_col > 0 && start_col <= chars.len() {
+        let before_text: String = chars[..start_col].iter().collect();
+        spans.push(Span::styled(before_text, base_style));
+    }
+
+    // Add selected text with highlight
+    let selection_start = start_col.min(chars.len());
+    let selection_end = end_col.min(chars.len());
+    if selection_start < selection_end {
+        let selected_text: String = chars[selection_start..selection_end].iter().collect();
+        spans.push(Span::styled(
+            selected_text,
+            base_style.bg(Color::Blue).fg(Color::White),
+        ));
+    }
+
+    // Add text after selection
+    if end_col < chars.len() {
+        let after_text: String = chars[end_col..].iter().collect();
+        spans.push(Span::styled(after_text, base_style));
+    }
+
+    ListItem::new(Line::from(spans))
+}
+
+fn create_input_line_with_selection(
+    prompt: &str,
+    prompt_style: Style,
+    chars: &[char],
+    cursor_pos: usize,
+    selection_start: Option<usize>,
+    selection_end: Option<usize>,
+) -> Line<'static> {
+    let mut spans = vec![Span::styled(format!("{prompt} "), prompt_style)];
+
+    // Check if there's a selection
+    if let (Some(start), Some(end)) = (selection_start, selection_end) {
+        let sel_start = start.min(end).min(chars.len());
+        let sel_end = start.max(end).min(chars.len());
+
+        // Add text before selection
+        if sel_start > 0 {
+            let before_text: String = chars[..sel_start].iter().collect();
+            spans.push(Span::raw(before_text));
+        }
+
+        // Add selected text with highlight
+        if sel_start < sel_end {
+            let selected_text: String = chars[sel_start..sel_end].iter().collect();
+            spans.push(Span::styled(
+                selected_text,
+                Style::default().bg(Color::Blue).fg(Color::White),
+            ));
+        }
+
+        // Add text after selection
+        if sel_end < chars.len() {
+            let after_text: String = chars[sel_end..].iter().collect();
+            spans.push(Span::raw(after_text));
+        }
+
+        // Add cursor if not within selection
+        if cursor_pos < sel_start || cursor_pos >= sel_end {
+            if cursor_pos < chars.len() {
+                // We need to insert cursor character - this is complex with selections
+                // For now, just add a simple cursor at the end
+                spans.push(Span::styled(" ", Style::default().bg(Color::White)));
+            } else {
+                spans.push(Span::styled(" ", Style::default().bg(Color::White)));
+            }
+        }
+    } else {
+        // No selection, show normal cursor
+        if cursor_pos < chars.len() {
+            let before_cursor: String = chars[..cursor_pos].iter().collect();
+            let cursor_char = chars[cursor_pos];
+            let after_cursor: String = chars[(cursor_pos + 1)..].iter().collect();
+
+            spans.push(Span::raw(before_cursor));
+            spans.push(Span::styled(
+                cursor_char.to_string(),
+                Style::default().bg(Color::White).fg(Color::Black),
+            ));
+            spans.push(Span::raw(after_cursor));
+        } else {
+            let input_text: String = chars.iter().collect();
+            spans.push(Span::raw(input_text));
+            spans.push(Span::styled(" ", Style::default().bg(Color::White)));
+        }
+    }
+
+    Line::from(spans)
 }

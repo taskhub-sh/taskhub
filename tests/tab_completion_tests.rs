@@ -101,8 +101,7 @@ mod dynamic_completion_tests {
             // Should find "history" when completing "podman hi"
             assert!(
                 completions.iter().any(|c| c.contains("story")),
-                "Should complete 'hi' to 'history' for podman, got: {:?}",
-                completions
+                "Should complete 'hi' to 'history' for podman, got: {completions:?}"
             );
         } else {
             // If no bash completion available, just pass the test
@@ -121,8 +120,7 @@ mod dynamic_completion_tests {
             let has_stash = completions.iter().any(|c| c.contains("sh"));
             assert!(
                 has_status || has_stash,
-                "Should complete 'sta' to 'status' or 'stash' for git, got: {:?}",
-                completions
+                "Should complete 'sta' to 'status' or 'stash' for git, got: {completions:?}"
             );
         } else {
             println!("No bash completion available for git, skipping test");
