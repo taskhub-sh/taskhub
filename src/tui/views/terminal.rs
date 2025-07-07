@@ -27,6 +27,7 @@ pub struct TerminalDisplayState<'a> {
     pub selection_end: Option<(usize, usize)>,
     pub input_selection_start: Option<usize>,
     pub input_selection_end: Option<usize>,
+    pub auto_suggestion: Option<&'a str>,
 }
 
 pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState<'_>) {
@@ -294,12 +295,15 @@ fn draw_input_box(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState<'_
         cursor_pos,
         state.input_selection_start,
         state.input_selection_end,
+        state.auto_suggestion,
     );
 
     let title = if state.is_command_running {
         "Command Input (Command running... Press Ctrl-C to stop)"
     } else if state.current_input.starts_with('/') {
         "Command Input (Type to filter commands)"
+    } else if state.auto_suggestion.is_some() {
+        "Command Input (Tab to accept all, Right arrow for next char, / for commands)"
     } else {
         "Command Input (Type / for commands, /quit to exit)"
     };
@@ -349,14 +353,15 @@ fn create_selected_line(
     ListItem::new(Line::from(spans))
 }
 
-fn create_input_line_with_selection(
+fn create_input_line_with_selection<'a>(
     prompt: &str,
     prompt_style: Style,
     chars: &[char],
     cursor_pos: usize,
     selection_start: Option<usize>,
     selection_end: Option<usize>,
-) -> Line<'static> {
+    auto_suggestion: Option<&'a str>,
+) -> Line<'a> {
     let mut spans = vec![Span::styled(format!("{prompt} "), prompt_style)];
 
     // Check if there's a selection
@@ -410,8 +415,44 @@ fn create_input_line_with_selection(
             spans.push(Span::raw(after_cursor));
         } else {
             let input_text: String = chars.iter().collect();
-            spans.push(Span::raw(input_text));
-            spans.push(Span::styled(" ", Style::default().bg(Color::White)));
+            spans.push(Span::raw(input_text.clone()));
+
+            // Show auto-suggestion as grayed-out text if available
+            if let Some(suggestion) = auto_suggestion {
+                if cursor_pos == chars.len()
+                    && !input_text.is_empty()
+                    && suggestion.starts_with(&input_text)
+                {
+                    // Show the remaining part of the suggestion
+                    let remaining = &suggestion[input_text.len()..];
+                    if !remaining.is_empty() {
+                        let remaining_chars: Vec<char> = remaining.chars().collect();
+                        if !remaining_chars.is_empty() {
+                            // Show first character with subtle cursor (gray background)
+                            spans.push(Span::styled(
+                                remaining_chars[0].to_string(),
+                                Style::default().bg(Color::Gray).fg(Color::Black),
+                            ));
+
+                            // Show rest of suggestion in dark gray
+                            if remaining_chars.len() > 1 {
+                                let rest: String = remaining_chars[1..].iter().collect();
+                                spans
+                                    .push(Span::styled(rest, Style::default().fg(Color::DarkGray)));
+                            }
+                        }
+                    } else {
+                        // No remaining suggestion, show normal block cursor
+                        spans.push(Span::styled(" ", Style::default().bg(Color::White)));
+                    }
+                } else {
+                    // No suggestion, show normal block cursor
+                    spans.push(Span::styled(" ", Style::default().bg(Color::White)));
+                }
+            } else {
+                // No suggestion, show normal block cursor
+                spans.push(Span::styled(" ", Style::default().bg(Color::White)));
+            }
         }
     }
 

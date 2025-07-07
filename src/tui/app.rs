@@ -49,6 +49,7 @@ pub struct App {
     pub history_area_start: u16,
     pub history_area_height: u16,
     pub input_area_start: u16,
+    pub auto_suggestion: Option<String>,
 }
 
 pub struct RunningCommand {
@@ -102,6 +103,7 @@ impl App {
             history_area_start: 0,
             history_area_height: 21,
             input_area_start: 21,
+            auto_suggestion: None,
         }
     }
 
@@ -300,6 +302,8 @@ impl App {
 
                                 // Update command filtering
                                 self.update_command_filtering();
+                                // Update auto-suggestion
+                                self.update_auto_suggestion();
                             }
                         }
                     }
@@ -317,17 +321,26 @@ impl App {
 
                             // Update command filtering
                             self.update_command_filtering();
+                            // Update auto-suggestion
+                            self.update_auto_suggestion();
                         }
                     }
                     KeyCode::Left => {
                         if self.cursor_position > 0 {
                             self.cursor_position -= 1;
+                            // Update auto-suggestion based on new cursor position
+                            self.update_auto_suggestion();
                         }
                     }
                     KeyCode::Right => {
                         let char_count = self.current_input.chars().count();
                         if self.cursor_position < char_count {
                             self.cursor_position += 1;
+                            // Update auto-suggestion based on new cursor position
+                            self.update_auto_suggestion();
+                        } else if let Some(_suggestion) = &self.auto_suggestion {
+                            // Accept next character from auto-suggestion
+                            self.accept_next_suggestion_char();
                         }
                     }
                     KeyCode::Up => {
@@ -460,9 +473,22 @@ impl App {
             self.show_command_list = false;
             self.command_filter.clear();
         }
+
+        // Update auto-suggestion
+        self.update_auto_suggestion();
     }
 
     pub fn handle_tab_completion(&mut self) {
+        // If there's an auto-suggestion and cursor is at the end, accept it completely
+        if let Some(suggestion) = &self.auto_suggestion {
+            if self.cursor_position == self.current_input.chars().count() {
+                self.current_input = suggestion.clone();
+                self.cursor_position = self.current_input.chars().count();
+                self.auto_suggestion = None;
+                return;
+            }
+        }
+
         // If completion is already active, cycle to next completion
         if self.completion_state.is_active {
             if let Some(completed_text) = self.completion_state.cycle_next() {
@@ -789,6 +815,66 @@ impl App {
     fn reset_history_navigation(&mut self) {
         self.history_index = None;
         self.saved_input.clear();
+    }
+
+    /// Update auto-suggestion based on current input
+    pub fn update_auto_suggestion(&mut self) {
+        if self.current_input.is_empty() {
+            self.auto_suggestion = None;
+            return;
+        }
+
+        // Don't suggest while showing command list
+        if self.show_command_list {
+            self.auto_suggestion = None;
+            return;
+        }
+
+        // Only show suggestions when cursor is at the end of input
+        if self.cursor_position != self.current_input.chars().count() {
+            self.auto_suggestion = None;
+            return;
+        }
+
+        // Get combined history
+        let combined_history = self.get_combined_command_history();
+
+        // Find the most recent command that starts with current input
+        // Search backwards through history (most recent first)
+        for command in combined_history.iter().rev() {
+            if command.starts_with(&self.current_input) && command != &self.current_input {
+                self.auto_suggestion = Some(command.clone());
+                return;
+            }
+        }
+
+        self.auto_suggestion = None;
+    }
+
+    /// Accept the next character from auto-suggestion
+    pub fn accept_next_suggestion_char(&mut self) {
+        if let Some(suggestion) = &self.auto_suggestion.clone() {
+            if self.cursor_position == self.current_input.chars().count() {
+                let suggestion_chars: Vec<char> = suggestion.chars().collect();
+                let input_chars: Vec<char> = self.current_input.chars().collect();
+
+                // Find the next character to accept
+                if input_chars.len() < suggestion_chars.len() {
+                    let next_char = suggestion_chars[input_chars.len()];
+                    self.current_input.push(next_char);
+                    self.cursor_position += 1;
+
+                    // Keep the same suggestion if there are more characters to accept
+                    if self.current_input.len() < suggestion.len() {
+                        // Keep the current suggestion
+                        self.auto_suggestion = Some(suggestion.clone());
+                    } else {
+                        // We've accepted the entire suggestion, clear it
+                        self.auto_suggestion = None;
+                    }
+                }
+            }
+        }
     }
 
     /// Start text selection at the given position

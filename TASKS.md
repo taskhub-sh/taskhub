@@ -37,7 +37,7 @@
   - Implement text selection and copy/paste operations in the terminal. Support mouse selection of text, Ctrl+C to copy selected text, and Ctrl+V to paste. Handle clipboard operations across different platforms.
 
 ### 8. Auto-suggestions Based on History
-- [ ] **Implement auto-suggestions from command history**
+- [x] **Implement auto-suggestions from command history**
   - Add inline auto-suggestions that appear as grayed-out text based on command history. As the user types, suggest the most recent matching command. Allow accepting suggestions with Tab or Right arrow.
 
 ### 9. Terminal Output Search
