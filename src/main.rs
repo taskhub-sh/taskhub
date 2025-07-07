@@ -84,6 +84,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                         selection_end: app.selection_end,
                         input_selection_start: app.input_selection_start,
                         input_selection_end: app.input_selection_end,
+                        auto_suggestion: app.auto_suggestion.as_deref(),
                     };
                     draw_task_list(f, size, &app.tasks, &state);
                 }
@@ -103,6 +104,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                         selection_end: app.selection_end,
                         input_selection_start: app.input_selection_start,
                         input_selection_end: app.input_selection_end,
+                        auto_suggestion: app.auto_suggestion.as_deref(),
                     };
                     draw_terminal(f, size, &state);
                 }
