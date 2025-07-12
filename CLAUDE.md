@@ -15,13 +15,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `cargo fmt` - Format code
 - `cargo clean` - Clean build artifacts
 
-### Alternative Commands (via Makefile)
-- `make run` - Run application
-- `make build` - Build project
-- `make test` - Run tests
-- `make lint` - Run clippy
-- `make format` - Format code
-
 ## Project Architecture
 
 TaskHub is a terminal-based task management system built in Rust with a modular, layered architecture:
