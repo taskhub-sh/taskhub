@@ -28,6 +28,9 @@ pub struct TerminalDisplayState<'a> {
     pub input_selection_start: Option<usize>,
     pub input_selection_end: Option<usize>,
     pub auto_suggestion: Option<&'a str>,
+    pub reverse_search_active: bool,
+    pub reverse_search_prompt: &'a str,
+    pub current_search_result: Option<&'a str>,
 }
 
 pub fn draw_terminal(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState<'_>) {
@@ -288,31 +291,43 @@ fn draw_input_box(f: &mut Frame<'_>, area: Rect, state: &TerminalDisplayState<'_
         Style::default().fg(Color::Green)
     };
 
-    let input_text = create_input_line_with_selection(
-        state.prompt,
-        prompt_style,
-        &chars,
-        cursor_pos,
-        state.input_selection_start,
-        state.input_selection_end,
-        state.auto_suggestion,
-    );
+    let input_text = if state.reverse_search_active {
+        create_reverse_search_line(state.reverse_search_prompt, state.current_search_result)
+    } else {
+        create_input_line_with_selection(
+            state.prompt,
+            prompt_style,
+            &chars,
+            cursor_pos,
+            state.input_selection_start,
+            state.input_selection_end,
+            state.auto_suggestion,
+        )
+    };
 
-    let title = if state.is_command_running {
+    let title = if state.reverse_search_active {
+        "Reverse Search (Enter to accept, Esc to cancel, ↑↓ to navigate)"
+    } else if state.is_command_running {
         "Command Input (Command running... Press Ctrl-C to stop)"
     } else if state.current_input.starts_with('/') {
         "Command Input (Type to filter commands)"
     } else if state.auto_suggestion.is_some() {
         "Command Input (Tab to accept all, Right arrow for next char, / for commands)"
     } else {
-        "Command Input (Type / for commands, /quit to exit)"
+        "Command Input (Type / for commands, /quit to exit, Ctrl-R for search)"
+    };
+
+    let border_style = if state.reverse_search_active {
+        Style::default().fg(Color::Magenta)
+    } else {
+        Style::default().fg(Color::Yellow)
     };
 
     let input = Paragraph::new(input_text).block(
         Block::default()
             .title(title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow)),
+            .border_style(border_style),
     );
 
     f.render_widget(input, area);
@@ -454,6 +469,25 @@ fn create_input_line_with_selection<'a>(
                 spans.push(Span::styled(" ", Style::default().bg(Color::White)));
             }
         }
+    }
+
+    Line::from(spans)
+}
+
+fn create_reverse_search_line<'a>(
+    search_prompt: &'a str,
+    current_result: Option<&'a str>,
+) -> Line<'a> {
+    let mut spans = vec![Span::styled(
+        search_prompt,
+        Style::default().fg(Color::Magenta),
+    )];
+
+    if let Some(result) = current_result {
+        spans.push(Span::styled(
+            format!(" {result}"),
+            Style::default().fg(Color::Green),
+        ));
     }
 
     Line::from(spans)
