@@ -148,9 +148,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                     } else {
                         match key.code {
                             KeyCode::Char(c) => {
-                                // If there are any modifiers (like Ctrl), use on_key_code
-                                // Otherwise use on_key for regular character input
-                                if key.modifiers.is_empty() {
+                                // For character input, we should handle Shift as normal since
+                                // crossterm already provides the correct uppercase/lowercase char.
+                                // Only treat as special modifier key if it's something other than Shift.
+                                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT
+                                {
                                     app.on_key(c);
                                 } else {
                                     app.on_key_code(key.code, key.modifiers);
