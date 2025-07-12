@@ -50,6 +50,10 @@ pub struct App {
     pub history_area_height: u16,
     pub input_area_start: u16,
     pub auto_suggestion: Option<String>,
+    pub reverse_search_active: bool,
+    pub reverse_search_query: String,
+    pub reverse_search_results: Vec<String>,
+    pub reverse_search_index: usize,
 }
 
 pub struct RunningCommand {
@@ -104,6 +108,10 @@ impl App {
             history_area_height: 21,
             input_area_start: 21,
             auto_suggestion: None,
+            reverse_search_active: false,
+            reverse_search_query: String::new(),
+            reverse_search_results: Vec::new(),
+            reverse_search_index: 0,
         }
     }
 
@@ -213,8 +221,14 @@ impl App {
         use crossterm::event::{KeyCode, KeyModifiers};
 
         // Handle Ctrl-C for killing running commands
-        if key_code == KeyCode::Char('c') {
+        if key_code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
             // This will be handled by checking for KeyEventKind::Press and KeyModifiers::CONTROL in main.rs
+            return;
+        }
+
+        // Handle Ctrl-R for reverse search
+        if key_code == KeyCode::Char('r') && modifiers.contains(KeyModifiers::CONTROL) {
+            self.start_reverse_search();
             return;
         }
 
@@ -223,14 +237,18 @@ impl App {
             AppMode::Terminal | AppMode::TaskList => {
                 match key_code {
                     KeyCode::Esc => {
-                        if self.show_command_list {
+                        if self.reverse_search_active {
+                            self.cancel_reverse_search();
+                        } else if self.show_command_list {
                             self.show_command_list = false;
                             self.command_filter.clear();
                             self.selected_command_index = 0;
                         }
                     }
                     KeyCode::Enter => {
-                        if !self.current_input.trim().is_empty() {
+                        if self.reverse_search_active {
+                            self.accept_reverse_search();
+                        } else if !self.current_input.trim().is_empty() {
                             let command = self.current_input.trim().to_string();
 
                             // If showing command list and user typed a partial command,
@@ -288,22 +306,29 @@ impl App {
                         self.handle_tab_completion();
                     }
                     KeyCode::Backspace => {
-                        // Reset completion state when user modifies input
-                        self.completion_state.reset();
-                        // Reset command history navigation when user modifies input
-                        self.reset_history_navigation();
-                        if self.cursor_position > 0 {
-                            let mut chars: Vec<char> = self.current_input.chars().collect();
-                            let cursor_pos = self.cursor_position.min(chars.len());
-                            if cursor_pos > 0 {
-                                chars.remove(cursor_pos - 1);
-                                self.current_input = chars.into_iter().collect();
-                                self.cursor_position = cursor_pos - 1;
+                        if self.reverse_search_active {
+                            if !self.reverse_search_query.is_empty() {
+                                self.reverse_search_query.pop();
+                                self.update_reverse_search();
+                            }
+                        } else {
+                            // Reset completion state when user modifies input
+                            self.completion_state.reset();
+                            // Reset command history navigation when user modifies input
+                            self.reset_history_navigation();
+                            if self.cursor_position > 0 {
+                                let mut chars: Vec<char> = self.current_input.chars().collect();
+                                let cursor_pos = self.cursor_position.min(chars.len());
+                                if cursor_pos > 0 {
+                                    chars.remove(cursor_pos - 1);
+                                    self.current_input = chars.into_iter().collect();
+                                    self.cursor_position = cursor_pos - 1;
 
-                                // Update command filtering
-                                self.update_command_filtering();
-                                // Update auto-suggestion
-                                self.update_auto_suggestion();
+                                    // Update command filtering
+                                    self.update_command_filtering();
+                                    // Update auto-suggestion
+                                    self.update_auto_suggestion();
+                                }
                             }
                         }
                     }
@@ -344,7 +369,9 @@ impl App {
                         }
                     }
                     KeyCode::Up => {
-                        if modifiers.contains(KeyModifiers::SHIFT) {
+                        if self.reverse_search_active {
+                            self.reverse_search_previous();
+                        } else if modifiers.contains(KeyModifiers::SHIFT) {
                             // Shift+Up: Scroll up through history (show older content)
                             let max_scroll = self.get_total_history_lines().saturating_sub(1);
                             if self.scroll_offset < max_scroll {
@@ -385,7 +412,9 @@ impl App {
                         }
                     }
                     KeyCode::Down => {
-                        if modifiers.contains(KeyModifiers::SHIFT) {
+                        if self.reverse_search_active {
+                            self.reverse_search_next();
+                        } else if modifiers.contains(KeyModifiers::SHIFT) {
                             // Shift+Down: Scroll down through history (show newer content)
                             if self.scroll_offset > 0 {
                                 self.scroll_offset -= 1;
@@ -450,6 +479,13 @@ impl App {
 
     pub fn handle_terminal_input(&mut self, ch: char) {
         if ch.is_control() {
+            return;
+        }
+
+        if self.reverse_search_active {
+            // Handle search input
+            self.reverse_search_query.push(ch);
+            self.update_reverse_search();
             return;
         }
 
@@ -1272,5 +1308,112 @@ impl App {
         };
 
         Some((content_line, content_col))
+    }
+
+    /// Start reverse search mode
+    pub fn start_reverse_search(&mut self) {
+        self.reverse_search_active = true;
+        self.reverse_search_query.clear();
+        self.reverse_search_results.clear();
+        self.reverse_search_index = 0;
+        self.update_reverse_search();
+    }
+
+    /// Cancel reverse search and restore original input
+    pub fn cancel_reverse_search(&mut self) {
+        self.reverse_search_active = false;
+        self.reverse_search_query.clear();
+        self.reverse_search_results.clear();
+        self.reverse_search_index = 0;
+    }
+
+    /// Accept current reverse search result
+    pub fn accept_reverse_search(&mut self) {
+        if !self.reverse_search_results.is_empty()
+            && self.reverse_search_index < self.reverse_search_results.len()
+        {
+            self.current_input = self.reverse_search_results[self.reverse_search_index].clone();
+            self.cursor_position = self.current_input.chars().count();
+        }
+        self.reverse_search_active = false;
+        self.reverse_search_query.clear();
+        self.reverse_search_results.clear();
+        self.reverse_search_index = 0;
+    }
+
+    /// Update reverse search results based on current query
+    pub fn update_reverse_search(&mut self) {
+        if self.reverse_search_query.is_empty() {
+            self.reverse_search_results.clear();
+            self.reverse_search_index = 0;
+            return;
+        }
+
+        // Get combined history
+        let combined_history = self.get_combined_command_history();
+
+        // Filter history based on search query
+        self.reverse_search_results = combined_history
+            .iter()
+            .filter(|cmd| {
+                cmd.to_lowercase()
+                    .contains(&self.reverse_search_query.to_lowercase())
+            })
+            .cloned()
+            .collect();
+
+        // Reverse the results so most recent matches come first
+        self.reverse_search_results.reverse();
+
+        // Reset index to first result
+        self.reverse_search_index = 0;
+    }
+
+    /// Navigate to previous search result
+    pub fn reverse_search_previous(&mut self) {
+        if !self.reverse_search_results.is_empty() && self.reverse_search_index > 0 {
+            self.reverse_search_index -= 1;
+        }
+    }
+
+    /// Navigate to next search result
+    pub fn reverse_search_next(&mut self) {
+        if !self.reverse_search_results.is_empty()
+            && self.reverse_search_index < self.reverse_search_results.len() - 1
+        {
+            self.reverse_search_index += 1;
+        }
+    }
+
+    /// Get current search result for display
+    pub fn get_current_search_result(&self) -> Option<&String> {
+        if self.reverse_search_results.is_empty()
+            || self.reverse_search_index >= self.reverse_search_results.len()
+        {
+            None
+        } else {
+            Some(&self.reverse_search_results[self.reverse_search_index])
+        }
+    }
+
+    /// Get reverse search prompt text
+    pub fn get_reverse_search_prompt(&self) -> String {
+        if self.reverse_search_active {
+            let match_info = if self.reverse_search_results.is_empty() {
+                "no matches".to_string()
+            } else {
+                format!(
+                    "{}/{}",
+                    self.reverse_search_index + 1,
+                    self.reverse_search_results.len()
+                )
+            };
+            format!(
+                "(reverse-i-search `{}`): {}",
+                self.reverse_search_query, match_info
+            )
+        } else {
+            String::new()
+        }
     }
 }

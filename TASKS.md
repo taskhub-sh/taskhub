@@ -21,7 +21,7 @@
   - Save command history to disk and restore it when the application starts. Store history in a file within the user's data directory, with configurable history size limits. Include timestamps for each command.
 
 ### 4. Reverse History Search
-- [ ] **Implement Ctrl+R reverse history search**
+- [x] **Implement Ctrl+R reverse history search**
   - Add Ctrl+R functionality to search through command history. Display a search prompt that filters history as the user types. Support navigating through matches and executing or editing selected commands.
 
 ### 5. Advanced Cursor Movement

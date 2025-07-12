@@ -70,6 +70,7 @@ async fn run_app<B: ratatui::backend::Backend>(
             match app.mode {
                 AppMode::TaskList => {
                     let filtered_commands = app.get_filtered_commands();
+                    let reverse_search_prompt = app.get_reverse_search_prompt();
                     let state = TerminalDisplayState {
                         command_history: &app.command_history,
                         current_input: &app.current_input,
@@ -85,11 +86,15 @@ async fn run_app<B: ratatui::backend::Backend>(
                         input_selection_start: app.input_selection_start,
                         input_selection_end: app.input_selection_end,
                         auto_suggestion: app.auto_suggestion.as_deref(),
+                        reverse_search_active: app.reverse_search_active,
+                        reverse_search_prompt: &reverse_search_prompt,
+                        current_search_result: app.get_current_search_result().map(|x| x.as_str()),
                     };
                     draw_task_list(f, size, &app.tasks, &state);
                 }
                 AppMode::Terminal => {
                     let filtered_commands = app.get_filtered_commands();
+                    let reverse_search_prompt = app.get_reverse_search_prompt();
                     let state = TerminalDisplayState {
                         command_history: &app.command_history,
                         current_input: &app.current_input,
@@ -105,6 +110,9 @@ async fn run_app<B: ratatui::backend::Backend>(
                         input_selection_start: app.input_selection_start,
                         input_selection_end: app.input_selection_end,
                         auto_suggestion: app.auto_suggestion.as_deref(),
+                        reverse_search_active: app.reverse_search_active,
+                        reverse_search_prompt: &reverse_search_prompt,
+                        current_search_result: app.get_current_search_result().map(|x| x.as_str()),
                     };
                     draw_terminal(f, size, &state);
                 }
@@ -132,6 +140,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                     {
                         // Handle Ctrl-V for paste
                         let _ = app.paste_from_clipboard();
+                    } else if key.code == KeyCode::Char('r')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        // Handle Ctrl-R for reverse search
+                        app.on_key_code(key.code, key.modifiers);
                     } else {
                         match key.code {
                             KeyCode::Char(c) => {
