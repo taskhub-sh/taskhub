@@ -29,7 +29,7 @@
   - Implement terminal-standard cursor movement shortcuts: Ctrl+A (beginning of line), Ctrl+E (end of line), Ctrl+F/B (forward/backward character), Ctrl+Left/Right (word-wise movement), and Ctrl+K (kill to end of line).
 
 ### 6. Clear Screen Functionality
-- [ ] **Implement clear screen command and shortcut**
+- [x] **Implement clear screen command and shortcut**
   - Add a `/clear` command and Ctrl+L shortcut to clear the terminal screen while preserving command history. The clear should reset the display but maintain scroll history for users who want to scroll back.
 
 ### 7. Copy/Paste Support

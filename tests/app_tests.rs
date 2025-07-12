@@ -36,6 +36,7 @@ async fn test_app_initialization() {
         "/task list",
         "/help",
         "/help keys",
+        "/clear",
     ];
     assert_eq!(app.available_commands, expected_commands);
 }
