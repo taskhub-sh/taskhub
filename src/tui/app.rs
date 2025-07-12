@@ -3,6 +3,7 @@ use crate::db::operations;
 use crate::history::HistoryManager;
 use crate::tui::completion::{CompletionEngine, CompletionState};
 use crate::tui::views::terminal::CommandEntry;
+use portable_pty::{CommandBuilder, PtySize};
 use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -74,7 +75,8 @@ pub struct App {
 
 pub struct RunningCommand {
     pub command: String,
-    pub child: Child,
+    pub child: Option<Child>,
+    pub pty_child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
     pub stdout_buffer: Vec<String>,
     pub stderr_buffer: Vec<String>,
     pub output_changed: bool,
@@ -720,43 +722,140 @@ impl App {
             return;
         }
 
-        let mut child = if cfg!(target_os = "windows") {
-            match Command::new("cmd")
-                .args(["/C", &command])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-            {
-                Ok(child) => child,
-                Err(e) => {
-                    let entry = CommandEntry {
-                        command,
-                        output: format!("Error executing command: {e}"),
-                        success: false,
-                    };
-                    self.add_command_entry(entry).await;
-                    return;
-                }
-            }
+        // Try PTY execution first for better color support
+        if let Ok(running_cmd) = self.execute_command_with_pty(&command).await {
+            self.running_command = Some(running_cmd);
         } else {
-            match Command::new("sh")
-                .args(["-c", &command])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-            {
-                Ok(child) => child,
-                Err(e) => {
-                    let entry = CommandEntry {
-                        command,
-                        output: format!("Error executing command: {e}"),
-                        success: false,
-                    };
-                    self.add_command_entry(entry).await;
-                    return;
+            // Fallback to regular pipes if PTY fails
+            if let Ok(running_cmd) = self.execute_command_with_pipes(&command).await {
+                self.running_command = Some(running_cmd);
+            } else {
+                let entry = CommandEntry {
+                    command,
+                    output: "Error: Failed to execute command".to_string(),
+                    success: false,
+                };
+                self.add_command_entry(entry).await;
+                return;
+            }
+        }
+
+        // Add initial entry to command history
+        let entry = CommandEntry {
+            command,
+            output: "Running...".to_string(),
+            success: true,
+        };
+        self.add_command_entry(entry).await;
+    }
+
+    async fn execute_command_with_pty(
+        &mut self,
+        command: &str,
+    ) -> Result<RunningCommand, Box<dyn std::error::Error + Send + Sync>> {
+        // Create a PTY system
+        let pty_system = portable_pty::native_pty_system();
+
+        // Create a PTY with reasonable size (can be made configurable later)
+        let pty_pair = pty_system.openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+
+        // Create command builder
+        let mut cmd = if cfg!(target_os = "windows") {
+            CommandBuilder::new("cmd")
+        } else {
+            CommandBuilder::new("sh")
+        };
+
+        if cfg!(target_os = "windows") {
+            cmd.args(["/C", command]);
+        } else {
+            cmd.args(["-c", command]);
+        }
+
+        // Set current working directory to preserve user's location
+        if let Ok(current_dir) = std::env::current_dir() {
+            cmd.cwd(current_dir);
+        }
+
+        // Set environment variables to encourage color output
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("FORCE_COLOR", "1");
+        cmd.env("CLICOLOR_FORCE", "1");
+
+        // Spawn the child process in the PTY
+        let pty_child = pty_pair.slave.spawn_command(cmd)?;
+
+        // Get the reader for PTY output
+        let mut reader = pty_pair.master.try_clone_reader()?;
+
+        // Create channel for receiving streaming output
+        let (output_sender, output_receiver) = mpsc::unbounded_channel();
+
+        // Start background task for streaming PTY output
+        tokio::task::spawn_blocking(move || {
+            let mut buffer = [0u8; 8192];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        // Convert bytes to string, handling potential invalid UTF-8
+                        let output = String::from_utf8_lossy(&buffer[..n]);
+
+                        // Split by lines and send each line
+                        for line in output.lines() {
+                            let _ = output_sender.send(OutputLine::Stdout(line.to_string()));
+                        }
+
+                        // Handle partial lines (data without newline at end)
+                        if !output.ends_with('\n') && !output.is_empty() {
+                            if let Some(_last_line) = output.lines().last() {
+                                // This was already sent above, so we don't need to resend
+                            }
+                        }
+                    }
+                    Err(_) => break,
                 }
             }
+        });
+
+        Ok(RunningCommand {
+            command: command.to_string(),
+            child: None,
+            pty_child: Some(pty_child),
+            stdout_buffer: Vec::new(),
+            stderr_buffer: Vec::new(),
+            output_changed: false,
+            output_receiver: Some(output_receiver),
+        })
+    }
+
+    async fn execute_command_with_pipes(
+        &mut self,
+        command: &str,
+    ) -> Result<RunningCommand, Box<dyn std::error::Error + Send + Sync>> {
+        let mut cmd = if cfg!(target_os = "windows") {
+            Command::new("cmd")
+        } else {
+            Command::new("sh")
         };
+
+        if cfg!(target_os = "windows") {
+            cmd.args(["/C", command]);
+        } else {
+            cmd.args(["-c", command]);
+        }
+
+        // Set current working directory to preserve user's location
+        if let Ok(current_dir) = std::env::current_dir() {
+            cmd.current_dir(current_dir);
+        }
+
+        let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
 
         // Take stdout and stderr for streaming
         let stdout = child.stdout.take();
@@ -802,26 +901,15 @@ impl App {
             });
         }
 
-        // Create the streaming command structure
-        let running_command = RunningCommand {
-            command: command.clone(),
-            child,
+        Ok(RunningCommand {
+            command: command.to_string(),
+            child: Some(child),
+            pty_child: None,
             stdout_buffer: Vec::new(),
             stderr_buffer: Vec::new(),
             output_changed: false,
             output_receiver: Some(output_receiver),
-        };
-
-        // Store the running command
-        self.running_command = Some(running_command);
-
-        // Add entry to show command started
-        let entry = CommandEntry {
-            command: command.clone(),
-            output: "Running...".to_string(),
-            success: true,
-        };
-        self.add_command_entry(entry).await;
+        })
     }
 
     pub async fn check_running_command(&mut self) {
@@ -829,53 +917,58 @@ impl App {
             // Try to read any new output from stdout/stderr
             self.read_streaming_output(&mut running).await;
 
-            match running.child.try_wait() {
-                Ok(Some(status)) => {
-                    // Command finished, do final output read
-                    self.read_streaming_output(&mut running).await;
+            // Check if command is finished (different types for PTY vs regular processes)
+            let (command_finished, command_success) = if let Some(ref mut child) = running.child {
+                match child.try_wait() {
+                    Ok(Some(status)) => (true, status.success()),
+                    Ok(None) => (false, true),
+                    Err(_) => (true, false),
+                }
+            } else if let Some(ref mut pty_child) = running.pty_child {
+                match pty_child.try_wait() {
+                    Ok(Some(status)) => (true, status.success()),
+                    Ok(None) => (false, true),
+                    Err(_) => (true, false),
+                }
+            } else {
+                (false, true) // Should not happen, but handle gracefully
+            };
 
-                    // Combine all buffered output
+            if command_finished {
+                // Command finished, do final output read
+                self.read_streaming_output(&mut running).await;
+
+                // Combine all buffered output
+                let combined_output = self.combine_streamed_output(&running);
+
+                // Update the last entry in history
+                if let Some(last_entry) = self.command_history.last_mut() {
+                    if last_entry.command == running.command {
+                        last_entry.output = if combined_output.trim().is_empty() {
+                            "(no output)".to_string()
+                        } else {
+                            combined_output
+                        };
+                        last_entry.success = command_success;
+                    }
+                }
+            } else {
+                // Command still running, update output if new data available
+                if running.output_changed {
                     let combined_output = self.combine_streamed_output(&running);
-
-                    // Update the last entry in history
                     if let Some(last_entry) = self.command_history.last_mut() {
                         if last_entry.command == running.command {
                             last_entry.output = if combined_output.trim().is_empty() {
-                                "(no output)".to_string()
+                                "Running...".to_string()
                             } else {
-                                combined_output
+                                format!("{combined_output}\nRunning...")
                             };
-                            last_entry.success = status.success();
                         }
                     }
+                    running.output_changed = false;
                 }
-                Ok(None) => {
-                    // Command still running, update output if new data available
-                    if running.output_changed {
-                        let combined_output = self.combine_streamed_output(&running);
-                        if let Some(last_entry) = self.command_history.last_mut() {
-                            if last_entry.command == running.command {
-                                last_entry.output = if combined_output.trim().is_empty() {
-                                    "Running...".to_string()
-                                } else {
-                                    format!("{combined_output}\nRunning...")
-                                };
-                            }
-                        }
-                        running.output_changed = false;
-                    }
-                    // Put the command back to continue monitoring
-                    self.running_command = Some(running);
-                }
-                Err(e) => {
-                    // Error checking status
-                    if let Some(last_entry) = self.command_history.last_mut() {
-                        if last_entry.command == running.command {
-                            last_entry.output = format!("Error checking command status: {e}");
-                            last_entry.success = false;
-                        }
-                    }
-                }
+                // Put the command back to continue monitoring
+                self.running_command = Some(running);
             }
         }
     }
@@ -919,7 +1012,12 @@ impl App {
 
     pub async fn kill_running_command(&mut self) {
         if let Some(mut running) = self.running_command.take() {
-            let _ = running.child.kill().await;
+            // Kill the appropriate process type
+            if let Some(ref mut child) = running.child {
+                let _ = child.kill().await;
+            } else if let Some(ref mut pty_child) = running.pty_child {
+                let _ = pty_child.kill();
+            }
 
             // Get any remaining output before killing
             let final_output = self.combine_streamed_output(&running);

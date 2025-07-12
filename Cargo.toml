@@ -24,3 +24,4 @@ chrono = { version = "*", features = ["serde"] }
 arboard = { version = "*", features = ["wayland-data-control"] }
 regex = "*"
 ansi-to-tui = "*"
+portable-pty = "*"
