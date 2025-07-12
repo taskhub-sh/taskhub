@@ -54,9 +54,9 @@
 - [ ] **Add task-aware tab completion**
   - Enhance tab completion to include task titles, IDs, and status values when using task-related commands. Support completing task titles in quotes for tasks with spaces, and provide context-aware suggestions based on current command.
 
-### 12. Quick Task Creation Shortcuts
-- [ ] **Implement quick task creation syntax**
-  - Add shorthand syntax for creating tasks directly in the terminal without using the `/task add` command. Support syntax like `+ Task title` or `>>> Task title` to quickly create tasks while maintaining full command functionality.
+### 12. Task MAnagment UI
+- [ ] **Tasks managment UI**
+  - [ ] Enhance the task managment UI to look similar to item 4.5.1 in @PRD.md. Implmenet the [n]ew and [d]elete options. You would also need to allow navigating the tasks with the arrows so we can see which task we are on.
 
 ### 13. Task Search and Filter Commands
 - [ ] **Add comprehensive task search and filtering**
@@ -153,3 +153,14 @@
 ### 35. Performance Optimization for Large Repositories
 - [ ] **Optimize task import performance for large GitHub repositories**
   - Implement intelligent pagination and parallel processing for large repository imports. Add task deduplication logic to handle duplicate imports. Implement incremental updates using GitHub ETags and conditional requests. Add database indexing on external_id and source fields for fast lookups. Limit concurrent API requests to respect GitHub rate limits.
+
+
+## Terminal Usability Enhancment
+
+### 36. Color support
+- [ ] **Add color support for command output in terminal view**
+  - Implement ANSI color code parsing and rendering in the terminal output view in `src/tui/views/terminal.rs`. Support standard ANSI escape sequences for foreground/background colors, bold, italic, and underline text formatting. Ensure colors are properly displayed when commands like `ls --color=always`, `git status`, or `cargo test` produce colored output. Handle terminals that don't support colors gracefully.
+
+### 37. Output streaming
+- [x] **Implement real-time command output streaming**
+  - Modify the command execution system in `src/tui/app.rs` to stream stdout and stderr in real-time instead of waiting for command completion. Update the terminal view to display streaming output immediately, allowing users to see progress of long-running commands like `cargo build` or `git clone`. Handle interleaved stdout/stderr properly and maintain output ordering.

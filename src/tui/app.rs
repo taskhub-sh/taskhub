@@ -7,7 +7,9 @@ use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 #[derive(Debug, PartialEq)]
@@ -73,6 +75,16 @@ pub struct App {
 pub struct RunningCommand {
     pub command: String,
     pub child: Child,
+    pub stdout_buffer: Vec<String>,
+    pub stderr_buffer: Vec<String>,
+    pub output_changed: bool,
+    pub output_receiver: Option<mpsc::UnboundedReceiver<OutputLine>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum OutputLine {
+    Stdout(String),
+    Stderr(String),
 }
 
 impl App {
@@ -708,7 +720,7 @@ impl App {
             return;
         }
 
-        let child = if cfg!(target_os = "windows") {
+        let mut child = if cfg!(target_os = "windows") {
             match Command::new("cmd")
                 .args(["/C", &command])
                 .stdout(Stdio::piped())
@@ -746,11 +758,62 @@ impl App {
             }
         };
 
-        // Store the running command
-        self.running_command = Some(RunningCommand {
+        // Take stdout and stderr for streaming
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        // Create channel for receiving streaming output
+        let (output_sender, output_receiver) = mpsc::unbounded_channel();
+
+        // Start background tasks for streaming stdout and stderr
+        if let Some(stdout) = stdout {
+            let sender = output_sender.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stdout);
+                let mut line = String::new();
+                while let Ok(bytes_read) = reader.read_line(&mut line).await {
+                    if bytes_read == 0 {
+                        break; // EOF
+                    }
+                    let trimmed_line = line.trim_end().to_string();
+                    if !trimmed_line.is_empty() {
+                        let _ = sender.send(OutputLine::Stdout(trimmed_line));
+                    }
+                    line.clear();
+                }
+            });
+        }
+
+        if let Some(stderr) = stderr {
+            let sender = output_sender.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(bytes_read) = reader.read_line(&mut line).await {
+                    if bytes_read == 0 {
+                        break; // EOF
+                    }
+                    let trimmed_line = line.trim_end().to_string();
+                    if !trimmed_line.is_empty() {
+                        let _ = sender.send(OutputLine::Stderr(trimmed_line));
+                    }
+                    line.clear();
+                }
+            });
+        }
+
+        // Create the streaming command structure
+        let running_command = RunningCommand {
             command: command.clone(),
             child,
-        });
+            stdout_buffer: Vec::new(),
+            stderr_buffer: Vec::new(),
+            output_changed: false,
+            output_receiver: Some(output_receiver),
+        };
+
+        // Store the running command
+        self.running_command = Some(running_command);
 
         // Add entry to show command started
         let entry = CommandEntry {
@@ -763,50 +826,51 @@ impl App {
 
     pub async fn check_running_command(&mut self) {
         if let Some(mut running) = self.running_command.take() {
+            // Try to read any new output from stdout/stderr
+            self.read_streaming_output(&mut running).await;
+
             match running.child.try_wait() {
                 Ok(Some(status)) => {
-                    // Command finished, collect output
-                    let output = running.child.wait_with_output().await;
-                    let (output_text, success) = match output {
-                        Ok(output) => {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            let combined_output = if stderr.is_empty() {
-                                stdout.to_string()
-                            } else if stdout.is_empty() {
-                                stderr.to_string()
-                            } else {
-                                format!("{stdout}\n{stderr}")
-                            };
-                            (combined_output, status.success())
-                        }
-                        Err(e) => (format!("Error reading command output: {e}"), false),
-                    };
+                    // Command finished, do final output read
+                    self.read_streaming_output(&mut running).await;
 
-                    // Update the last entry in history (the "Running..." entry)
+                    // Combine all buffered output
+                    let combined_output = self.combine_streamed_output(&running);
+
+                    // Update the last entry in history
                     if let Some(last_entry) = self.command_history.last_mut() {
-                        if last_entry.command == running.command
-                            && last_entry.output == "Running..."
-                        {
-                            last_entry.output = if output_text.trim().is_empty() {
+                        if last_entry.command == running.command {
+                            last_entry.output = if combined_output.trim().is_empty() {
                                 "(no output)".to_string()
                             } else {
-                                output_text
+                                combined_output
                             };
-                            last_entry.success = success;
+                            last_entry.success = status.success();
                         }
                     }
                 }
                 Ok(None) => {
-                    // Command still running, put it back
+                    // Command still running, update output if new data available
+                    if running.output_changed {
+                        let combined_output = self.combine_streamed_output(&running);
+                        if let Some(last_entry) = self.command_history.last_mut() {
+                            if last_entry.command == running.command {
+                                last_entry.output = if combined_output.trim().is_empty() {
+                                    "Running...".to_string()
+                                } else {
+                                    format!("{combined_output}\nRunning...")
+                                };
+                            }
+                        }
+                        running.output_changed = false;
+                    }
+                    // Put the command back to continue monitoring
                     self.running_command = Some(running);
                 }
                 Err(e) => {
                     // Error checking status
                     if let Some(last_entry) = self.command_history.last_mut() {
-                        if last_entry.command == running.command
-                            && last_entry.output == "Running..."
-                        {
+                        if last_entry.command == running.command {
                             last_entry.output = format!("Error checking command status: {e}");
                             last_entry.success = false;
                         }
@@ -816,14 +880,59 @@ impl App {
         }
     }
 
+    async fn read_streaming_output(&self, running: &mut RunningCommand) {
+        // Read all available output from the channel
+        if let Some(ref mut receiver) = running.output_receiver {
+            let mut new_output = false;
+
+            // Read all available messages without blocking
+            while let Ok(output_line) = receiver.try_recv() {
+                new_output = true;
+                match output_line {
+                    OutputLine::Stdout(line) => {
+                        running.stdout_buffer.push(line);
+                    }
+                    OutputLine::Stderr(line) => {
+                        running.stderr_buffer.push(line);
+                    }
+                }
+            }
+
+            if new_output {
+                running.output_changed = true;
+            }
+        }
+    }
+
+    fn combine_streamed_output(&self, running: &RunningCommand) -> String {
+        let stdout_text = running.stdout_buffer.join("\n");
+        let stderr_text = running.stderr_buffer.join("\n");
+
+        if stderr_text.is_empty() {
+            stdout_text
+        } else if stdout_text.is_empty() {
+            stderr_text
+        } else {
+            format!("{stdout_text}\n{stderr_text}")
+        }
+    }
+
     pub async fn kill_running_command(&mut self) {
         if let Some(mut running) = self.running_command.take() {
             let _ = running.child.kill().await;
 
+            // Get any remaining output before killing
+            let final_output = self.combine_streamed_output(&running);
+
             // Update the last entry in history
             if let Some(last_entry) = self.command_history.last_mut() {
-                if last_entry.command == running.command && last_entry.output == "Running..." {
-                    last_entry.output = "Killed by user (Ctrl-C)".to_string();
+                if last_entry.command == running.command {
+                    let output = if final_output.trim().is_empty() {
+                        "Killed by user (Ctrl-C)".to_string()
+                    } else {
+                        format!("{final_output}\nKilled by user (Ctrl-C)")
+                    };
+                    last_entry.output = output;
                     last_entry.success = false;
                 }
             }
