@@ -91,3 +91,65 @@
 ### 20. Terminal Window Management
 - [ ] **Add terminal split and tab functionality**
   - Implement terminal multiplexing with support for splitting the terminal into multiple panes or tabs. Allow running different commands in each pane and switching between them with keyboard shortcuts.
+
+## Task Source Integration Features
+
+### 21. Database Schema for Multi-Source Tasks
+- [ ] **Create enhanced task database schema with source tracking**
+  - Extend the current Task model in `src/db/models.rs` to support multiple task sources. Add fields for external_id, source_type (GitHub, Local), source_metadata (JSON for source-specific data), sync_status, last_synced_at. Update database migrations to support the new schema. Create short, prefixed task IDs (GH-123, LCL-456) for better UX as shown in PRD section 4.5.1.
+
+### 22. GitHub Integration Foundation
+- [ ] **Implement GitHub API client and authentication**
+  - Create `src/integrations/github.rs` module with GitHub API client using reqwest. Implement personal access token authentication via OS keychain storage using the keyring crate. Add configuration management for GitHub repositories to sync from. Include error handling for rate limits and authentication failures. Support for both github.com and GitHub Enterprise.
+
+### 23. GitHub Issues Import
+- [ ] **Implement GitHub Issues synchronization**
+  - Create GitHub Issues import functionality that fetches issues and PRs from configured repositories. Map GitHub issue fields to TaskHub Task model (title, body->description, state->status, labels, assignees, milestone->due_date). Handle pagination for large repositories. Store GitHub-specific metadata (number, html_url, comments_count) in source_metadata JSON field. Implement incremental sync using GitHub's updated_since parameter.
+
+### 24. Local Task Management
+- [ ] **Implement local task creation and management**
+  - Create local task management functionality in `src/db/operations.rs` for tasks that exist only in TaskHub's database (not synced from external sources). Implement CRUD operations for local tasks with LCL- prefix IDs. Add validation for required fields and proper status transitions. Support for all Task model fields including custom labels and priorities.
+
+### 25. Task List UI with Source Indicators
+- [ ] **Enhance task list view to display task sources and IDs**
+  - Update the task list UI in `src/tui/views/task_list.rs` to match the design shown in PRD section 4.5.1. Display short task IDs with source prefixes (GH-123, LCL-456), task source column, and appropriate status/priority indicators. Add sorting and filtering by source type. Implement keyboard navigation and selection for task operations.
+
+### 26. Background Import System
+- [ ] **Create background task import system with progress indication**
+  - Implement asynchronous background import system in `src/sync/` that can import tasks from GitHub while the user continues using the terminal. Add import progress indicators in the UI showing "Importing from GitHub..." with task counts. Implement proper error handling and retry logic for failed imports. Store import status and last sync timestamps per repository.
+
+### 27. Remote Configuration Commands
+- [ ] **Implement remote repository configuration management**
+  - Add `/remote add github <owner/repo>` command to add GitHub repositories to sync configuration. Add `/remote list` to show all configured remotes with their sync status. Add `/remote remove <repo>` to remove repositories from configuration. Store remote configuration in local database with settings like sync intervals, label filters, and assignee filters.
+
+### 28. Task Import Commands
+- [ ] **Implement /sync commands for bulk task imports**
+  - Add `/sync` command to sync tasks from all configured GitHub repositories. Add `/sync status` to show current sync status and last sync times for all repositories. Add `/sync github` to sync only from GitHub sources (when multiple source types exist). Include progress feedback showing "Syncing 3/5 repositories..." and error reporting in the terminal.
+
+### 29. Conflict Resolution Framework
+- [ ] **Create conflict resolution system for task updates**
+  - Implement conflict resolution framework in `src/sync/conflicts.rs` for handling cases where tasks are modified both locally and in external sources. Add last-write-wins strategy as default with conflict detection and logging. Store modification timestamps and source information for all task changes. Provide user options to resolve conflicts manually when detected.
+
+### 30. GitHub Authentication and Credentials
+- [ ] **Implement GitHub authentication and credential management**
+  - Create authentication system in `src/config/github.rs` for GitHub API access. Implement secure storage of GitHub personal access tokens using OS keychain via keyring crate. Add `/auth github <token>` command to set up GitHub authentication. Include token validation and scope verification. Support for both github.com and GitHub Enterprise Server instances.
+
+### 31. Task Detail View with Source Context
+- [ ] **Enhance task detail view to show source-specific information**
+  - Update task detail view in `src/tui/views/task_detail.rs` to match PRD section 4.5.2 design. Show task source, external URL (for GitHub tasks), source-specific metadata, and sync status. Add source-appropriate action buttons (e.g., "View on GitHub" for GitHub tasks). Display last sync time and any sync conflicts or errors.
+
+### 32. Task Status Synchronization
+- [ ] **Implement bidirectional task status sync (read-only for now)**
+  - Create read-only synchronization of task status changes from GitHub to local database. Map GitHub issue states (open, closed) to TaskHub status (Open, Done). Handle GitHub-specific states like "reopened" and track state history. Add support for GitHub labels mapping to TaskHub labels. Prepare framework for future write-back capabilities.
+
+### 33. Import Progress and Error Handling
+- [ ] **Implement comprehensive import error handling and user feedback**
+  - Add robust error handling for GitHub API failures, rate limiting, authentication errors, and network issues. Implement exponential backoff retry logic for transient failures. Provide clear error messages to users with suggested resolution steps. Add import logs that users can review to troubleshoot sync issues. Store failed import attempts for manual retry.
+
+### 34. Task Search with Source Filtering
+- [ ] **Extend task search to include source-based filtering**
+  - Enhance existing search functionality to filter tasks by source (GitHub, Local). Add search syntax like `/task search source:github` or `/task filter repo:owner/repo`. Include task source in search results display. Support searching within source-specific metadata like GitHub labels or repository names.
+
+### 35. Performance Optimization for Large Repositories
+- [ ] **Optimize task import performance for large GitHub repositories**
+  - Implement intelligent pagination and parallel processing for large repository imports. Add task deduplication logic to handle duplicate imports. Implement incremental updates using GitHub ETags and conditional requests. Add database indexing on external_id and source fields for fast lookups. Limit concurrent API requests to respect GitHub rate limits.
