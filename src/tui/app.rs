@@ -71,6 +71,7 @@ impl App {
             "/task list".to_string(),
             "/help".to_string(),
             "/help keys".to_string(),
+            "/clear".to_string(),
         ];
 
         let completion_engine = CompletionEngine::new(available_commands.clone());
@@ -232,6 +233,12 @@ impl App {
         // Handle Ctrl-R for reverse search
         if key_code == KeyCode::Char('r') && modifiers.contains(KeyModifiers::CONTROL) {
             self.start_reverse_search();
+            return;
+        }
+
+        // Handle Ctrl-L for clear screen
+        if key_code == KeyCode::Char('l') && modifiers.contains(KeyModifiers::CONTROL) {
+            self.clear_screen();
             return;
         }
 
@@ -849,7 +856,7 @@ impl App {
                 true
             }
             "/help" => {
-                let help_text = "Available commands:\n/quit - Exit the application\n/task - Switch to task list view\n/task add - Add a new task\n/task list - Show task list\n/help - Show this help message\n/help keys - Show keyboard shortcuts";
+                let help_text = "Available commands:\n/quit - Exit the application\n/task - Switch to task list view\n/task add - Add a new task\n/task list - Show task list\n/clear - Clear terminal screen (Ctrl+L)\n/help - Show this help message\n/help keys - Show keyboard shortcuts";
                 let entry = CommandEntry {
                     command: command.to_string(),
                     output: help_text.to_string(),
@@ -859,13 +866,17 @@ impl App {
                 true
             }
             "/help keys" => {
-                let keys_help = "\n📋 TaskHub Keyboard Shortcuts\n\n🔄 Mode Switching:\n  q                 Switch to Terminal mode (from TaskList)\n  /task            Switch to TaskList mode\n\n📝 Text Editing:\n  Ctrl+A           Move cursor to beginning of line\n  Ctrl+E           Move cursor to end of line\n  Ctrl+K           Delete from cursor to end of line\n  Backspace        Delete character before cursor\n  Delete           Delete character at cursor\n\n🧭 Navigation:\n  ↑/↓ arrows       Navigate command history\n  ←/→ arrows       Move cursor left/right\n  Ctrl+←/→         Move cursor by word\n  Home/End         Move to beginning/end (or scroll history if empty)\n\n📜 Scrolling:\n  Shift+↑/↓        Scroll through terminal history\n  Page Up/Down     Scroll by 10 lines\n\n🔍 Search & Completion:\n  Ctrl+R           Reverse search through history\n  Tab              Accept auto-suggestion or cycle completions\n  Right arrow      Accept next character from suggestion\n\n📋 Copy & Paste:\n  Ctrl+C           Copy selected text or interrupt command\n  Ctrl+V           Paste from clipboard\n  Middle Click     Paste from clipboard\n\n🖱️ Mouse:\n  Left Click       Start text selection\n  Left Drag        Extend text selection\n  Right Click      Clear selections\n\n⌨️ Command List (when typing /):\n  ↑/↓ arrows       Navigate command list\n  Enter            Select command\n  Esc              Cancel command selection\n\n🔍 Reverse Search (Ctrl+R):\n  ↑/↓ arrows       Navigate search results\n  Enter            Accept search result\n  Esc              Cancel reverse search\n\n🚪 Exit:\n  /quit            Exit application\n  Ctrl+C           Interrupt running command";
+                let keys_help = "\n📋 TaskHub Keyboard Shortcuts\n\n🔄 Mode Switching:\n  q                 Switch to Terminal mode (from TaskList)\n  /task            Switch to TaskList mode\n\n📝 Text Editing:\n  Ctrl+A           Move cursor to beginning of line\n  Ctrl+E           Move cursor to end of line\n  Ctrl+K           Delete from cursor to end of line\n  Backspace        Delete character before cursor\n  Delete           Delete character at cursor\n\n🧭 Navigation:\n  ↑/↓ arrows       Navigate command history\n  ←/→ arrows       Move cursor left/right\n  Ctrl+←/→         Move cursor by word\n  Home/End         Move to beginning/end (or scroll history if empty)\n\n📜 Scrolling:\n  Shift+↑/↓        Scroll through terminal history\n  Page Up/Down     Scroll by 10 lines\n\n🔍 Search & Completion:\n  Ctrl+R           Reverse search through history\n  Tab              Accept auto-suggestion or cycle completions\n  Right arrow      Accept next character from suggestion\n\n📋 Copy & Paste:\n  Ctrl+C           Copy selected text or interrupt command\n  Ctrl+V           Paste from clipboard\n  Middle Click     Paste from clipboard\n\n🖱️ Mouse:\n  Left Click       Start text selection\n  Left Drag        Extend text selection\n  Right Click      Clear selections\n\n⌨️ Command List (when typing /):\n  ↑/↓ arrows       Navigate command list\n  Enter            Select command\n  Esc              Cancel command selection\n\n🔍 Reverse Search (Ctrl+R):\n  ↑/↓ arrows       Navigate search results\n  Enter            Accept search result\n  Esc              Cancel reverse search\n\n🚪 Exit:\n  /quit            Exit application\n  Ctrl+C           Interrupt running command\n  Ctrl+L           Clear terminal screen";
                 let entry = CommandEntry {
                     command: command.to_string(),
                     output: keys_help.to_string(),
                     success: true,
                 };
                 self.add_command_entry(entry).await;
+                true
+            }
+            "/clear" => {
+                self.clear_screen();
                 true
             }
             _ if command.starts_with("/task add") => {
@@ -1563,5 +1574,29 @@ impl App {
 
         self.cursor_position = pos;
         self.update_auto_suggestion();
+    }
+
+    /// Clear the terminal screen and all command history
+    pub fn clear_screen(&mut self) {
+        // Clear entire command history (no scroll-back access)
+        self.command_history.clear();
+
+        // Reset display state to show a clean screen
+        self.scroll_offset = 0; // Reset to bottom
+        self.current_input.clear(); // Clear current input
+        self.cursor_position = 0; // Reset cursor
+        self.show_command_list = false; // Hide command list
+        self.command_filter.clear(); // Clear command filter
+        self.selected_command_index = 0; // Reset command selection
+        self.reverse_search_active = false; // Exit reverse search mode
+        self.reverse_search_query.clear(); // Clear search query
+        self.reverse_search_results.clear(); // Clear search results
+        self.reverse_search_index = 0; // Reset search index
+        self.auto_suggestion = None; // Clear auto-suggestion
+        self.reset_history_navigation(); // Reset history navigation
+
+        // Clear any text selections
+        self.clear_selection();
+        self.clear_input_selection();
     }
 }

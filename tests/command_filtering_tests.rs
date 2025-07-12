@@ -18,8 +18,8 @@ mod command_filtering {
         // With empty filter, should only show top-level commands (no spaces)
         let filtered = app.get_filtered_commands();
 
-        // Should exclude "/task add" and "/task list" (they contain spaces)
-        let expected = vec!["/quit", "/task", "/help"];
+        // Should exclude "/task add", "/task list", and "/help keys" (they contain spaces)
+        let expected = vec!["/quit", "/task", "/help", "/clear"];
         assert_eq!(filtered, expected);
     }
 
