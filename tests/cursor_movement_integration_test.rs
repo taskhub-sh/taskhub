@@ -41,13 +41,18 @@ async fn test_ctrl_shortcuts_work_with_key_code_handling() {
     app.on_key_code(KeyCode::Right, KeyModifiers::CONTROL);
     assert_eq!(app.cursor_position, 6); // Beginning of "world"
 
-    // Test Ctrl+F for single character forward
+    // Test Ctrl+F now starts output search instead of moving cursor
     app.on_key_code(KeyCode::Char('f'), KeyModifiers::CONTROL);
-    assert_eq!(app.cursor_position, 7);
+    assert_eq!(app.cursor_position, 6); // Position unchanged
+    assert!(app.output_search_active); // Search should be active now
+
+    // Cancel output search to test other functionality
+    app.on_key_code(KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.output_search_active); // Search should be cancelled
 
     // Test Ctrl+B for single character backward
     app.on_key_code(KeyCode::Char('b'), KeyModifiers::CONTROL);
-    assert_eq!(app.cursor_position, 6);
+    assert_eq!(app.cursor_position, 5);
 }
 
 #[tokio::test]
@@ -78,15 +83,24 @@ async fn test_modifier_combinations_work_correctly() {
     app.current_input = "test input".to_string();
     app.cursor_position = 5; // After "test "
 
-    // Test that Ctrl+F moves forward one character
+    // Test that Ctrl+F now starts output search instead of moving cursor
     app.on_key_code(KeyCode::Char('f'), KeyModifiers::CONTROL);
-    assert_eq!(app.cursor_position, 6);
+    assert_eq!(app.cursor_position, 5); // Position unchanged
+    assert!(app.output_search_active); // Search should be active now
+
+    // Cancel output search to test other functionality
+    app.on_key_code(KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.output_search_active); // Search should be cancelled
 
     // Test that Ctrl+B moves backward one character
     app.on_key_code(KeyCode::Char('b'), KeyModifiers::CONTROL);
-    assert_eq!(app.cursor_position, 5);
+    assert_eq!(app.cursor_position, 4);
 
-    // Test word movement with multiple words
+    // Test word movement with multiple words from position 4
+    app.on_key_code(KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.cursor_position, 5); // Beginning of "input"
+
+    // Move to end of input
     app.on_key_code(KeyCode::Right, KeyModifiers::CONTROL);
     assert_eq!(app.cursor_position, 10); // End of input
 
