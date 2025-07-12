@@ -1,3 +1,4 @@
+use ansi_to_tui::IntoText;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -12,6 +13,26 @@ struct HistoryRenderState<'a> {
     selection_end: Option<(usize, usize)>,
     search_matches: &'a [(usize, usize, usize)],
     current_search_match: usize,
+}
+
+/// Create a ListItem with ANSI color parsing support
+fn create_ansi_parsed_line(text: &str, fallback_style: Style) -> ListItem<'static> {
+    // Try to parse ANSI sequences
+    match text.into_text() {
+        Ok(parsed_text) => {
+            if let Some(line) = parsed_text.lines.first() {
+                // Successfully parsed ANSI - use the parsed spans
+                ListItem::new(Line::from(line.spans.clone()))
+            } else {
+                // Empty parsed result - fallback to styled text
+                ListItem::new(Line::from(Span::styled(text.to_string(), fallback_style)))
+            }
+        }
+        Err(_) => {
+            // Failed to parse ANSI - fallback to styled text
+            ListItem::new(Line::from(Span::styled(text.to_string(), fallback_style)))
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -240,12 +261,12 @@ fn draw_command_history(
                             create_selected_line(line.to_string(), 0, len, output_style)
                         }
                     } else {
-                        // Not selected
-                        ListItem::new(Line::from(Span::styled(line, output_style)))
+                        // Not selected - use ANSI parsing
+                        create_ansi_parsed_line(line, output_style)
                     }
                 } else {
-                    // No selection
-                    ListItem::new(Line::from(Span::styled(line, output_style)))
+                    // No selection - use ANSI parsing
+                    create_ansi_parsed_line(line, output_style)
                 };
 
                 all_items.push(line_item);
