@@ -30,6 +30,7 @@ pub struct App {
     pub command_filter: String,
     pub selected_command_index: usize,
     pub available_commands: Vec<String>,
+    pub user_navigated_command_list: bool,
     pub pending_task_add: Option<Task>,
     pub completion_engine: CompletionEngine,
     pub completion_state: CompletionState,
@@ -69,6 +70,7 @@ impl App {
             "/task add".to_string(),
             "/task list".to_string(),
             "/help".to_string(),
+            "/help keys".to_string(),
         ];
 
         let completion_engine = CompletionEngine::new(available_commands.clone());
@@ -88,6 +90,7 @@ impl App {
             command_filter: String::new(),
             selected_command_index: 0,
             available_commands,
+            user_navigated_command_list: false,
             pending_task_add: None,
             completion_engine,
             completion_state: CompletionState::new(),
@@ -232,6 +235,64 @@ impl App {
             return;
         }
 
+        // Handle advanced cursor movement shortcuts
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            match key_code {
+                KeyCode::Char('a') => {
+                    // Ctrl+A: Move cursor to beginning of line
+                    self.cursor_position = 0;
+                    self.update_auto_suggestion();
+                    return;
+                }
+                KeyCode::Char('e') => {
+                    // Ctrl+E: Move cursor to end of line
+                    self.cursor_position = self.current_input.chars().count();
+                    self.update_auto_suggestion();
+                    return;
+                }
+                KeyCode::Char('f') => {
+                    // Ctrl+F: Move cursor forward one character
+                    let char_count = self.current_input.chars().count();
+                    if self.cursor_position < char_count {
+                        self.cursor_position += 1;
+                        self.update_auto_suggestion();
+                    }
+                    return;
+                }
+                KeyCode::Char('b') => {
+                    // Ctrl+B: Move cursor backward one character
+                    if self.cursor_position > 0 {
+                        self.cursor_position -= 1;
+                        self.update_auto_suggestion();
+                    }
+                    return;
+                }
+                KeyCode::Char('k') => {
+                    // Ctrl+K: Kill (delete) from cursor to end of line
+                    let chars: Vec<char> = self.current_input.chars().collect();
+                    let cursor_pos = self.cursor_position.min(chars.len());
+                    self.current_input = chars[..cursor_pos].iter().collect();
+                    // Cursor position stays the same (at end of remaining text)
+                    self.completion_state.reset();
+                    self.reset_history_navigation();
+                    self.update_command_filtering();
+                    self.update_auto_suggestion();
+                    return;
+                }
+                KeyCode::Left => {
+                    // Ctrl+Left: Move cursor backward by word
+                    self.move_cursor_word_backward();
+                    return;
+                }
+                KeyCode::Right => {
+                    // Ctrl+Right: Move cursor forward by word
+                    self.move_cursor_word_forward();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // Handle key codes for both modes
         match self.mode {
             AppMode::Terminal | AppMode::TaskList => {
@@ -243,6 +304,7 @@ impl App {
                             self.show_command_list = false;
                             self.command_filter.clear();
                             self.selected_command_index = 0;
+                            self.user_navigated_command_list = false;
                         }
                     }
                     KeyCode::Enter => {
@@ -251,31 +313,10 @@ impl App {
                         } else if !self.current_input.trim().is_empty() {
                             let command = self.current_input.trim().to_string();
 
-                            // If showing command list and user typed a partial command,
-                            // but the current input is a complete command, execute it
+                            // If showing command list, decide between executing typed command or selecting from list
                             if self.show_command_list {
-                                // Check if current input is an exact match for a complete command
-                                let is_complete_command =
-                                    self.available_commands.contains(&command)
-                                        || command.starts_with("/task add ")
-                                        || command.starts_with("/help")
-                                        || command.starts_with("/quit");
-
-                                if is_complete_command {
-                                    // Execute the command directly
-                                    // But only if no command is currently running
-                                    if self.running_command.is_none() {
-                                        self.current_input.clear();
-                                        self.cursor_position = 0;
-                                        self.show_command_list = false;
-                                        self.command_filter.clear();
-                                        self.selected_command_index = 0;
-                                        self.pending_command = Some(command);
-                                        self.scroll_offset = 0;
-                                        self.reset_history_navigation();
-                                    }
-                                } else {
-                                    // Select the currently highlighted command from list
+                                if self.user_navigated_command_list {
+                                    // User actively navigated - select from list
                                     let filtered_commands = self.get_filtered_commands();
                                     if !filtered_commands.is_empty()
                                         && self.selected_command_index < filtered_commands.len()
@@ -287,6 +328,46 @@ impl App {
                                         self.show_command_list = false;
                                         self.command_filter.clear();
                                         self.selected_command_index = 0;
+                                        self.user_navigated_command_list = false;
+                                    }
+                                } else {
+                                    // User never navigated - execute typed command if it's complete
+                                    let is_complete_command =
+                                        self.available_commands.contains(&command)
+                                            || command.starts_with("/task add ")
+                                            || command.starts_with("/help")
+                                            || command.starts_with("/quit");
+
+                                    if is_complete_command {
+                                        // Execute the command directly
+                                        if self.running_command.is_none() {
+                                            self.current_input.clear();
+                                            self.cursor_position = 0;
+                                            self.show_command_list = false;
+                                            self.command_filter.clear();
+                                            self.selected_command_index = 0;
+                                            self.user_navigated_command_list = false;
+                                            self.pending_command = Some(command);
+                                            self.scroll_offset = 0;
+                                            self.reset_history_navigation();
+                                        }
+                                    } else {
+                                        // Incomplete command - select from list
+                                        let filtered_commands = self.get_filtered_commands();
+                                        if !filtered_commands.is_empty()
+                                            && self.selected_command_index < filtered_commands.len()
+                                        {
+                                            let selected_command = filtered_commands
+                                                [self.selected_command_index]
+                                                .clone();
+                                            self.current_input = selected_command;
+                                            self.cursor_position =
+                                                self.current_input.chars().count();
+                                            self.show_command_list = false;
+                                            self.command_filter.clear();
+                                            self.selected_command_index = 0;
+                                            self.user_navigated_command_list = false;
+                                        }
                                     }
                                 }
                             } else {
@@ -381,6 +462,7 @@ impl App {
                             // Navigate up in command list
                             if self.selected_command_index > 0 {
                                 self.selected_command_index -= 1;
+                                self.user_navigated_command_list = true;
                             }
                         } else {
                             // Command history navigation
@@ -426,6 +508,7 @@ impl App {
                                 < filtered_commands.len().saturating_sub(1)
                             {
                                 self.selected_command_index += 1;
+                                self.user_navigated_command_list = true;
                             }
                         } else {
                             // Command history navigation
@@ -505,9 +588,11 @@ impl App {
             self.command_filter = self.current_input[1..].to_string();
             self.show_command_list = true;
             self.selected_command_index = 0;
+            self.user_navigated_command_list = false;
         } else {
             self.show_command_list = false;
             self.command_filter.clear();
+            self.user_navigated_command_list = false;
         }
 
         // Update auto-suggestion
@@ -721,9 +806,11 @@ impl App {
             self.command_filter = self.current_input[1..].to_string();
             self.show_command_list = true;
             self.selected_command_index = 0;
+            self.user_navigated_command_list = false;
         } else {
             self.show_command_list = false;
             self.command_filter.clear();
+            self.user_navigated_command_list = false;
         }
     }
 
@@ -762,10 +849,20 @@ impl App {
                 true
             }
             "/help" => {
-                let help_text = "Available commands:\n/quit - Exit the application\n/task - Switch to task list view\n/task add - Add a new task\n/task list - Show task list\n/help - Show this help message";
+                let help_text = "Available commands:\n/quit - Exit the application\n/task - Switch to task list view\n/task add - Add a new task\n/task list - Show task list\n/help - Show this help message\n/help keys - Show keyboard shortcuts";
                 let entry = CommandEntry {
                     command: command.to_string(),
                     output: help_text.to_string(),
+                    success: true,
+                };
+                self.add_command_entry(entry).await;
+                true
+            }
+            "/help keys" => {
+                let keys_help = "\n📋 TaskHub Keyboard Shortcuts\n\n🔄 Mode Switching:\n  q                 Switch to Terminal mode (from TaskList)\n  /task            Switch to TaskList mode\n\n📝 Text Editing:\n  Ctrl+A           Move cursor to beginning of line\n  Ctrl+E           Move cursor to end of line\n  Ctrl+K           Delete from cursor to end of line\n  Backspace        Delete character before cursor\n  Delete           Delete character at cursor\n\n🧭 Navigation:\n  ↑/↓ arrows       Navigate command history\n  ←/→ arrows       Move cursor left/right\n  Ctrl+←/→         Move cursor by word\n  Home/End         Move to beginning/end (or scroll history if empty)\n\n📜 Scrolling:\n  Shift+↑/↓        Scroll through terminal history\n  Page Up/Down     Scroll by 10 lines\n\n🔍 Search & Completion:\n  Ctrl+R           Reverse search through history\n  Tab              Accept auto-suggestion or cycle completions\n  Right arrow      Accept next character from suggestion\n\n📋 Copy & Paste:\n  Ctrl+C           Copy selected text or interrupt command\n  Ctrl+V           Paste from clipboard\n  Middle Click     Paste from clipboard\n\n🖱️ Mouse:\n  Left Click       Start text selection\n  Left Drag        Extend text selection\n  Right Click      Clear selections\n\n⌨️ Command List (when typing /):\n  ↑/↓ arrows       Navigate command list\n  Enter            Select command\n  Esc              Cancel command selection\n\n🔍 Reverse Search (Ctrl+R):\n  ↑/↓ arrows       Navigate search results\n  Enter            Accept search result\n  Esc              Cancel reverse search\n\n🚪 Exit:\n  /quit            Exit application\n  Ctrl+C           Interrupt running command";
+                let entry = CommandEntry {
+                    command: command.to_string(),
+                    output: keys_help.to_string(),
                     success: true,
                 };
                 self.add_command_entry(entry).await;
@@ -1415,5 +1512,56 @@ impl App {
         } else {
             String::new()
         }
+    }
+
+    /// Move cursor backward by word (Ctrl+Left)
+    pub fn move_cursor_word_backward(&mut self) {
+        if self.cursor_position == 0 {
+            return;
+        }
+
+        let chars: Vec<char> = self.current_input.chars().collect();
+        let mut pos = self.cursor_position.min(chars.len());
+
+        // Move backward from current position
+        pos = pos.saturating_sub(1);
+
+        // Skip whitespace
+        while pos > 0 && chars[pos].is_whitespace() {
+            pos -= 1;
+        }
+
+        // Skip non-whitespace characters to find the beginning of the word
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        self.cursor_position = pos;
+        self.update_auto_suggestion();
+    }
+
+    /// Move cursor forward by word (Ctrl+Right)
+    pub fn move_cursor_word_forward(&mut self) {
+        let chars: Vec<char> = self.current_input.chars().collect();
+        let char_count = chars.len();
+
+        if self.cursor_position >= char_count {
+            return;
+        }
+
+        let mut pos = self.cursor_position;
+
+        // Skip current word (non-whitespace characters)
+        while pos < char_count && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        // Skip whitespace to find the beginning of the next word
+        while pos < char_count && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        self.cursor_position = pos;
+        self.update_auto_suggestion();
     }
 }

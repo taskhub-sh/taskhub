@@ -29,7 +29,14 @@ async fn test_app_initialization() {
     assert_eq!(app.scroll_offset, 0);
 
     // Check available commands
-    let expected_commands = vec!["/quit", "/task", "/task add", "/task list", "/help"];
+    let expected_commands = vec![
+        "/quit",
+        "/task",
+        "/task add",
+        "/task list",
+        "/help",
+        "/help keys",
+    ];
     assert_eq!(app.available_commands, expected_commands);
 }
 

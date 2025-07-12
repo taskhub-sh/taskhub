@@ -25,7 +25,7 @@
   - Add Ctrl+R functionality to search through command history. Display a search prompt that filters history as the user types. Support navigating through matches and executing or editing selected commands.
 
 ### 5. Advanced Cursor Movement
-- [ ] **Add advanced cursor movement shortcuts**
+- [x] **Add advanced cursor movement shortcuts**
   - Implement terminal-standard cursor movement shortcuts: Ctrl+A (beginning of line), Ctrl+E (end of line), Ctrl+F/B (forward/backward character), Ctrl+Left/Right (word-wise movement), and Ctrl+K (kill to end of line).
 
 ### 6. Clear Screen Functionality

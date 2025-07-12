@@ -148,7 +148,15 @@ async fn run_app<B: ratatui::backend::Backend>(
                     } else {
                         match key.code {
                             KeyCode::Char(c) => {
-                                app.on_key(c);
+                                // For character input, we should handle Shift as normal since
+                                // crossterm already provides the correct uppercase/lowercase char.
+                                // Only treat as special modifier key if it's something other than Shift.
+                                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT
+                                {
+                                    app.on_key(c);
+                                } else {
+                                    app.on_key_code(key.code, key.modifiers);
+                                }
                             }
                             other_key => {
                                 app.on_key_code(other_key, key.modifiers);
