@@ -232,6 +232,64 @@ impl App {
             return;
         }
 
+        // Handle advanced cursor movement shortcuts
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            match key_code {
+                KeyCode::Char('a') => {
+                    // Ctrl+A: Move cursor to beginning of line
+                    self.cursor_position = 0;
+                    self.update_auto_suggestion();
+                    return;
+                }
+                KeyCode::Char('e') => {
+                    // Ctrl+E: Move cursor to end of line
+                    self.cursor_position = self.current_input.chars().count();
+                    self.update_auto_suggestion();
+                    return;
+                }
+                KeyCode::Char('f') => {
+                    // Ctrl+F: Move cursor forward one character
+                    let char_count = self.current_input.chars().count();
+                    if self.cursor_position < char_count {
+                        self.cursor_position += 1;
+                        self.update_auto_suggestion();
+                    }
+                    return;
+                }
+                KeyCode::Char('b') => {
+                    // Ctrl+B: Move cursor backward one character
+                    if self.cursor_position > 0 {
+                        self.cursor_position -= 1;
+                        self.update_auto_suggestion();
+                    }
+                    return;
+                }
+                KeyCode::Char('k') => {
+                    // Ctrl+K: Kill (delete) from cursor to end of line
+                    let chars: Vec<char> = self.current_input.chars().collect();
+                    let cursor_pos = self.cursor_position.min(chars.len());
+                    self.current_input = chars[..cursor_pos].iter().collect();
+                    // Cursor position stays the same (at end of remaining text)
+                    self.completion_state.reset();
+                    self.reset_history_navigation();
+                    self.update_command_filtering();
+                    self.update_auto_suggestion();
+                    return;
+                }
+                KeyCode::Left => {
+                    // Ctrl+Left: Move cursor backward by word
+                    self.move_cursor_word_backward();
+                    return;
+                }
+                KeyCode::Right => {
+                    // Ctrl+Right: Move cursor forward by word
+                    self.move_cursor_word_forward();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // Handle key codes for both modes
         match self.mode {
             AppMode::Terminal | AppMode::TaskList => {
@@ -1415,5 +1473,56 @@ impl App {
         } else {
             String::new()
         }
+    }
+
+    /// Move cursor backward by word (Ctrl+Left)
+    pub fn move_cursor_word_backward(&mut self) {
+        if self.cursor_position == 0 {
+            return;
+        }
+
+        let chars: Vec<char> = self.current_input.chars().collect();
+        let mut pos = self.cursor_position.min(chars.len());
+
+        // Move backward from current position
+        pos = pos.saturating_sub(1);
+
+        // Skip whitespace
+        while pos > 0 && chars[pos].is_whitespace() {
+            pos -= 1;
+        }
+
+        // Skip non-whitespace characters to find the beginning of the word
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        self.cursor_position = pos;
+        self.update_auto_suggestion();
+    }
+
+    /// Move cursor forward by word (Ctrl+Right)
+    pub fn move_cursor_word_forward(&mut self) {
+        let chars: Vec<char> = self.current_input.chars().collect();
+        let char_count = chars.len();
+
+        if self.cursor_position >= char_count {
+            return;
+        }
+
+        let mut pos = self.cursor_position;
+
+        // Skip current word (non-whitespace characters)
+        while pos < char_count && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        // Skip whitespace to find the beginning of the next word
+        while pos < char_count && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        self.cursor_position = pos;
+        self.update_auto_suggestion();
     }
 }

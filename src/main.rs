@@ -148,7 +148,13 @@ async fn run_app<B: ratatui::backend::Backend>(
                     } else {
                         match key.code {
                             KeyCode::Char(c) => {
-                                app.on_key(c);
+                                // If there are any modifiers (like Ctrl), use on_key_code
+                                // Otherwise use on_key for regular character input
+                                if key.modifiers.is_empty() {
+                                    app.on_key(c);
+                                } else {
+                                    app.on_key_code(key.code, key.modifiers);
+                                }
                             }
                             other_key => {
                                 app.on_key_code(other_key, key.modifiers);
