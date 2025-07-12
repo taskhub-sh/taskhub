@@ -3,6 +3,7 @@ use crate::db::operations;
 use crate::history::HistoryManager;
 use crate::tui::completion::{CompletionEngine, CompletionState};
 use crate::tui::views::terminal::CommandEntry;
+use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -13,6 +14,13 @@ use uuid::Uuid;
 pub enum AppMode {
     TaskList,
     Terminal,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum SearchMode {
+    CaseInsensitive,
+    CaseSensitive,
+    Regex,
 }
 
 pub struct App {
@@ -55,6 +63,11 @@ pub struct App {
     pub reverse_search_query: String,
     pub reverse_search_results: Vec<String>,
     pub reverse_search_index: usize,
+    pub output_search_active: bool,
+    pub output_search_query: String,
+    pub output_search_matches: Vec<(usize, usize, usize)>, // (line_index, start_col, end_col)
+    pub output_search_current_match: usize,
+    pub output_search_mode: SearchMode,
 }
 
 pub struct RunningCommand {
@@ -116,6 +129,11 @@ impl App {
             reverse_search_query: String::new(),
             reverse_search_results: Vec::new(),
             reverse_search_index: 0,
+            output_search_active: false,
+            output_search_query: String::new(),
+            output_search_matches: Vec::new(),
+            output_search_current_match: 0,
+            output_search_mode: SearchMode::CaseInsensitive,
         }
     }
 
@@ -258,12 +276,8 @@ impl App {
                     return;
                 }
                 KeyCode::Char('f') => {
-                    // Ctrl+F: Move cursor forward one character
-                    let char_count = self.current_input.chars().count();
-                    if self.cursor_position < char_count {
-                        self.cursor_position += 1;
-                        self.update_auto_suggestion();
-                    }
+                    // Ctrl+F: Start output search
+                    self.start_output_search();
                     return;
                 }
                 KeyCode::Char('b') => {
@@ -305,7 +319,9 @@ impl App {
             AppMode::Terminal | AppMode::TaskList => {
                 match key_code {
                     KeyCode::Esc => {
-                        if self.reverse_search_active {
+                        if self.output_search_active {
+                            self.cancel_output_search();
+                        } else if self.reverse_search_active {
                             self.cancel_reverse_search();
                         } else if self.show_command_list {
                             self.show_command_list = false;
@@ -315,7 +331,9 @@ impl App {
                         }
                     }
                     KeyCode::Enter => {
-                        if self.reverse_search_active {
+                        if self.output_search_active {
+                            self.cancel_output_search();
+                        } else if self.reverse_search_active {
                             self.accept_reverse_search();
                         } else if !self.current_input.trim().is_empty() {
                             let command = self.current_input.trim().to_string();
@@ -391,10 +409,20 @@ impl App {
                         }
                     }
                     KeyCode::Tab => {
-                        self.handle_tab_completion();
+                        if self.output_search_active {
+                            // Toggle search mode in output search mode
+                            self.toggle_output_search_mode();
+                        } else {
+                            self.handle_tab_completion();
+                        }
                     }
                     KeyCode::Backspace => {
-                        if self.reverse_search_active {
+                        if self.output_search_active {
+                            if !self.output_search_query.is_empty() {
+                                self.output_search_query.pop();
+                                self.update_output_search();
+                            }
+                        } else if self.reverse_search_active {
                             if !self.reverse_search_query.is_empty() {
                                 self.reverse_search_query.pop();
                                 self.update_reverse_search();
@@ -457,7 +485,9 @@ impl App {
                         }
                     }
                     KeyCode::Up => {
-                        if self.reverse_search_active {
+                        if self.output_search_active {
+                            self.output_search_previous_match();
+                        } else if self.reverse_search_active {
                             self.reverse_search_previous();
                         } else if modifiers.contains(KeyModifiers::SHIFT) {
                             // Shift+Up: Scroll up through history (show older content)
@@ -501,7 +531,9 @@ impl App {
                         }
                     }
                     KeyCode::Down => {
-                        if self.reverse_search_active {
+                        if self.output_search_active {
+                            self.output_search_next_match();
+                        } else if self.reverse_search_active {
                             self.reverse_search_next();
                         } else if modifiers.contains(KeyModifiers::SHIFT) {
                             // Shift+Down: Scroll down through history (show newer content)
@@ -569,6 +601,13 @@ impl App {
 
     pub fn handle_terminal_input(&mut self, ch: char) {
         if ch.is_control() {
+            return;
+        }
+
+        if self.output_search_active {
+            // Handle output search input
+            self.output_search_query.push(ch);
+            self.update_output_search();
             return;
         }
 
@@ -866,7 +905,7 @@ impl App {
                 true
             }
             "/help keys" => {
-                let keys_help = "\n📋 TaskHub Keyboard Shortcuts\n\n🔄 Mode Switching:\n  q                 Switch to Terminal mode (from TaskList)\n  /task            Switch to TaskList mode\n\n📝 Text Editing:\n  Ctrl+A           Move cursor to beginning of line\n  Ctrl+E           Move cursor to end of line\n  Ctrl+K           Delete from cursor to end of line\n  Backspace        Delete character before cursor\n  Delete           Delete character at cursor\n\n🧭 Navigation:\n  ↑/↓ arrows       Navigate command history\n  ←/→ arrows       Move cursor left/right\n  Ctrl+←/→         Move cursor by word\n  Home/End         Move to beginning/end (or scroll history if empty)\n\n📜 Scrolling:\n  Shift+↑/↓        Scroll through terminal history\n  Page Up/Down     Scroll by 10 lines\n\n🔍 Search & Completion:\n  Ctrl+R           Reverse search through history\n  Tab              Accept auto-suggestion or cycle completions\n  Right arrow      Accept next character from suggestion\n\n📋 Copy & Paste:\n  Ctrl+C           Copy selected text or interrupt command\n  Ctrl+V           Paste from clipboard\n  Middle Click     Paste from clipboard\n\n🖱️ Mouse:\n  Left Click       Start text selection\n  Left Drag        Extend text selection\n  Right Click      Clear selections\n\n⌨️ Command List (when typing /):\n  ↑/↓ arrows       Navigate command list\n  Enter            Select command\n  Esc              Cancel command selection\n\n🔍 Reverse Search (Ctrl+R):\n  ↑/↓ arrows       Navigate search results\n  Enter            Accept search result\n  Esc              Cancel reverse search\n\n🚪 Exit:\n  /quit            Exit application\n  Ctrl+C           Interrupt running command\n  Ctrl+L           Clear terminal screen";
+                let keys_help = "\n📋 TaskHub Keyboard Shortcuts\n\n🔄 Mode Switching:\n  q                 Switch to Terminal mode (from TaskList)\n  /task            Switch to TaskList mode\n\n📝 Text Editing:\n  Ctrl+A           Move cursor to beginning of line\n  Ctrl+E           Move cursor to end of line\n  Ctrl+B           Move cursor backward one character\n  Ctrl+K           Delete from cursor to end of line\n  Backspace        Delete character before cursor\n  Delete           Delete character at cursor\n\n🧭 Navigation:\n  ↑/↓ arrows       Navigate command history\n  ←/→ arrows       Move cursor left/right\n  Ctrl+←/→         Move cursor by word\n  Home/End         Move to beginning/end (or scroll history if empty)\n\n📜 Scrolling:\n  Shift+↑/↓        Scroll through terminal history\n  Page Up/Down     Scroll by 10 lines\n\n🔍 Search & Completion:\n  Ctrl+R           Reverse search through history\n  Ctrl+F           Search terminal output\n  Tab              Accept auto-suggestion or cycle completions\n  Right arrow      Accept next character from suggestion\n\n📋 Copy & Paste:\n  Ctrl+C           Copy selected text or interrupt command\n  Ctrl+V           Paste from clipboard\n  Middle Click     Paste from clipboard\n\n🖱️ Mouse:\n  Left Click       Start text selection\n  Left Drag        Extend text selection\n  Right Click      Clear selections\n\n⌨️ Command List (when typing /):\n  ↑/↓ arrows       Navigate command list\n  Enter            Select command\n  Esc              Cancel command selection\n\n🔍 Reverse Search (Ctrl+R):\n  ↑/↓ arrows       Navigate search results\n  Enter            Accept search result\n  Esc              Cancel reverse search\n\n🔍 Output Search (Ctrl+F):\n  Type text        Search terminal output\n  ↑/↓ arrows       Navigate between matches\n  Tab              Toggle case sensitivity ([Aa]/[aa])\n  Enter/Esc        Exit search mode\n\n🚪 Exit:\n  /quit            Exit application\n  Ctrl+C           Interrupt running command\n  Ctrl+L           Clear terminal screen";
                 let entry = CommandEntry {
                     command: command.to_string(),
                     output: keys_help.to_string(),
@@ -1592,11 +1631,231 @@ impl App {
         self.reverse_search_query.clear(); // Clear search query
         self.reverse_search_results.clear(); // Clear search results
         self.reverse_search_index = 0; // Reset search index
+        self.output_search_active = false; // Exit output search mode
+        self.output_search_query.clear(); // Clear output search query
+        self.output_search_matches.clear(); // Clear output search matches
+        self.output_search_current_match = 0; // Reset output search index
         self.auto_suggestion = None; // Clear auto-suggestion
         self.reset_history_navigation(); // Reset history navigation
 
         // Clear any text selections
         self.clear_selection();
         self.clear_input_selection();
+    }
+
+    /// Start output search mode
+    pub fn start_output_search(&mut self) {
+        self.output_search_active = true;
+        self.output_search_query.clear();
+        self.output_search_matches.clear();
+        self.output_search_current_match = 0;
+        self.update_output_search();
+    }
+
+    /// Cancel output search and restore original state
+    pub fn cancel_output_search(&mut self) {
+        self.output_search_active = false;
+        self.output_search_query.clear();
+        self.output_search_matches.clear();
+        self.output_search_current_match = 0;
+    }
+
+    /// Update output search results based on current query
+    pub fn update_output_search(&mut self) {
+        self.output_search_matches.clear();
+        self.output_search_current_match = 0;
+
+        if self.output_search_query.is_empty() {
+            return;
+        }
+
+        let search_query = self.output_search_query.clone();
+        let search_mode = self.output_search_mode.clone();
+        let mut matches = Vec::new();
+        let mut line_index = 0;
+
+        // Search through command history
+        for entry in &self.command_history {
+            // Search in command line
+            let command_text = format!("> {}", entry.command);
+            Self::search_in_text_static(
+                &command_text,
+                line_index,
+                &search_query,
+                &search_mode,
+                &mut matches,
+            );
+            line_index += 1;
+
+            // Search in output lines
+            if !entry.output.is_empty() {
+                for line in entry.output.lines() {
+                    Self::search_in_text_static(
+                        line,
+                        line_index,
+                        &search_query,
+                        &search_mode,
+                        &mut matches,
+                    );
+                    line_index += 1;
+                }
+            }
+
+            // Empty line for spacing
+            line_index += 1;
+        }
+
+        self.output_search_matches = matches;
+
+        // Auto-scroll to first match if any
+        if !self.output_search_matches.is_empty() {
+            self.scroll_to_search_match(0);
+        }
+    }
+
+    fn search_in_text_static(
+        text: &str,
+        line_index: usize,
+        search_query: &str,
+        search_mode: &SearchMode,
+        matches: &mut Vec<(usize, usize, usize)>,
+    ) {
+        match search_mode {
+            SearchMode::CaseInsensitive => {
+                let search_query = search_query.to_lowercase();
+                let search_text = text.to_lowercase();
+                let mut start = 0;
+                while let Some(pos) = search_text[start..].find(&search_query) {
+                    let actual_pos = start + pos;
+                    let end_pos = actual_pos + search_query.len();
+                    matches.push((line_index, actual_pos, end_pos));
+                    start = actual_pos + 1;
+                }
+            }
+            SearchMode::CaseSensitive => {
+                let mut start = 0;
+                while let Some(pos) = text[start..].find(search_query) {
+                    let actual_pos = start + pos;
+                    let end_pos = actual_pos + search_query.len();
+                    matches.push((line_index, actual_pos, end_pos));
+                    start = actual_pos + 1;
+                }
+            }
+            SearchMode::Regex => {
+                if let Ok(regex) = Regex::new(search_query) {
+                    for mat in regex.find_iter(text) {
+                        matches.push((line_index, mat.start(), mat.end()));
+                    }
+                }
+                // If regex compilation fails, silently continue (matches will be empty)
+            }
+        }
+    }
+
+    /// Navigate to previous search match
+    pub fn output_search_previous_match(&mut self) {
+        if self.output_search_matches.is_empty() {
+            return;
+        }
+
+        if self.output_search_current_match > 0 {
+            self.output_search_current_match -= 1;
+        } else {
+            self.output_search_current_match = self.output_search_matches.len() - 1;
+        }
+
+        self.scroll_to_search_match(self.output_search_current_match);
+    }
+
+    /// Navigate to next search match
+    pub fn output_search_next_match(&mut self) {
+        if self.output_search_matches.is_empty() {
+            return;
+        }
+
+        if self.output_search_current_match < self.output_search_matches.len() - 1 {
+            self.output_search_current_match += 1;
+        } else {
+            self.output_search_current_match = 0;
+        }
+
+        self.scroll_to_search_match(self.output_search_current_match);
+    }
+
+    /// Scroll to make the specified search match visible
+    fn scroll_to_search_match(&mut self, match_index: usize) {
+        if match_index >= self.output_search_matches.len() {
+            return;
+        }
+
+        let (target_line, _, _) = self.output_search_matches[match_index];
+        let total_lines = self.get_total_history_lines();
+        let available_height = self.history_area_height.saturating_sub(2) as usize;
+
+        // Calculate scroll offset to center the target line
+        let desired_scroll = if total_lines <= available_height {
+            0 // All content fits, no scrolling needed
+        } else {
+            let center_offset = available_height / 2;
+            if target_line >= center_offset {
+                total_lines.saturating_sub(target_line + center_offset)
+            } else {
+                total_lines.saturating_sub(available_height)
+            }
+        };
+
+        self.scroll_offset = desired_scroll;
+    }
+
+    /// Get search status text for display
+    pub fn get_output_search_status(&self) -> String {
+        if self.output_search_active {
+            let mode_indicator = match self.output_search_mode {
+                SearchMode::CaseInsensitive => "[aa]",
+                SearchMode::CaseSensitive => "[Aa]",
+                SearchMode::Regex => "[.*]",
+            };
+
+            if self.output_search_matches.is_empty() {
+                if self.output_search_query.is_empty() {
+                    format!("Search {mode_indicator}: (Type to search output, Tab to toggle mode)")
+                } else {
+                    format!(
+                        "Search {} '{}' - No matches",
+                        mode_indicator, self.output_search_query
+                    )
+                }
+            } else {
+                format!(
+                    "Search {} '{}' - Match {}/{}",
+                    mode_indicator,
+                    self.output_search_query,
+                    self.output_search_current_match + 1,
+                    self.output_search_matches.len()
+                )
+            }
+        } else {
+            String::new()
+        }
+    }
+
+    /// Toggle search mode for output search (case-insensitive -> case-sensitive -> regex)
+    pub fn toggle_output_search_mode(&mut self) {
+        self.output_search_mode = match self.output_search_mode {
+            SearchMode::CaseInsensitive => SearchMode::CaseSensitive,
+            SearchMode::CaseSensitive => SearchMode::Regex,
+            SearchMode::Regex => SearchMode::CaseInsensitive,
+        };
+        self.update_output_search();
+    }
+
+    /// Get current search matches for highlighting
+    pub fn get_output_search_matches(&self) -> &[(usize, usize, usize)] {
+        &self.output_search_matches
+    }
+
+    /// Get current search match index
+    pub fn get_current_search_match(&self) -> usize {
+        self.output_search_current_match
     }
 }

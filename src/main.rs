@@ -89,6 +89,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                         reverse_search_active: app.reverse_search_active,
                         reverse_search_prompt: &reverse_search_prompt,
                         current_search_result: app.get_current_search_result().map(|x| x.as_str()),
+                        output_search_active: app.output_search_active,
+                        output_search_query: &app.output_search_query,
+                        output_search_matches: app.get_output_search_matches(),
+                        output_search_current_match: app.get_current_search_match(),
+                        output_search_status: &app.get_output_search_status(),
                     };
                     draw_task_list(f, size, &app.tasks, &state);
                 }
@@ -113,6 +118,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                         reverse_search_active: app.reverse_search_active,
                         reverse_search_prompt: &reverse_search_prompt,
                         current_search_result: app.get_current_search_result().map(|x| x.as_str()),
+                        output_search_active: app.output_search_active,
+                        output_search_query: &app.output_search_query,
+                        output_search_matches: app.get_output_search_matches(),
+                        output_search_current_match: app.get_current_search_match(),
+                        output_search_status: &app.get_output_search_status(),
                     };
                     draw_terminal(f, size, &state);
                 }

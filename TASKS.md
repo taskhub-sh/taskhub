@@ -41,7 +41,7 @@
   - Add inline auto-suggestions that appear as grayed-out text based on command history. As the user types, suggest the most recent matching command. Allow accepting suggestions with Tab or Right arrow.
 
 ### 9. Terminal Output Search
-- [ ] **Add search functionality for terminal output**
+- [x] **Add search functionality for terminal output**
   - Implement Ctrl+F to search through the current terminal output. Display a search bar that highlights matches and allows navigation between results. Support case-sensitive and regex search options.
 
 ### 10. Terminal Theming Support

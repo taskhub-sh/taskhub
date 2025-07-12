@@ -5,13 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ### Build & Run
-- `cargo build` - Build the project
-- `cargo run` - Run the TaskHub TUI application
-- `cargo build --release` - Build optimized release version
+- `cargo check` - For a quick build check. Works most of the time
+- `cargo build` - Build the project - use only if `cargo check` is not enough
+- Never use `cargo run` - it requires a TTY which you do not have
 
 ### Quality Assurance
 - `cargo test` - Run all tests
-- `cargo clippy` - Run linter (required before commits)
+- `cargo clippy` - Run linter (required before commits). Fix errors and warnings.
 - `cargo fmt` - Format code
 - `cargo clean` - Clean build artifacts
 

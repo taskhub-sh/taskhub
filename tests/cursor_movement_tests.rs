@@ -32,19 +32,20 @@ async fn test_ctrl_e_moves_cursor_to_end() {
 }
 
 #[tokio::test]
-async fn test_ctrl_f_moves_cursor_forward_one_char() {
+async fn test_ctrl_f_starts_output_search() {
     let mut app = create_test_app().await;
     app.current_input = "hello".to_string();
     app.cursor_position = 2;
 
     app.on_key_code(KeyCode::Char('f'), KeyModifiers::CONTROL);
 
-    assert_eq!(app.cursor_position, 3);
+    assert_eq!(app.cursor_position, 2); // Position unchanged
     assert_eq!(app.current_input, "hello"); // Input unchanged
+    assert!(app.output_search_active); // Search should be active
 }
 
 #[tokio::test]
-async fn test_ctrl_f_at_end_does_nothing() {
+async fn test_ctrl_f_at_end_starts_search() {
     let mut app = create_test_app().await;
     app.current_input = "hello".to_string();
     app.cursor_position = 5; // At end
@@ -53,6 +54,7 @@ async fn test_ctrl_f_at_end_does_nothing() {
 
     assert_eq!(app.cursor_position, 5); // Unchanged
     assert_eq!(app.current_input, "hello"); // Input unchanged
+    assert!(app.output_search_active); // Search should be active
 }
 
 #[tokio::test]
