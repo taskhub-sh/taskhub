@@ -1,0 +1,1 @@
+[31mHello[0m [32mWorld[0m from file

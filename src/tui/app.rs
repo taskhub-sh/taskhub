@@ -1,6 +1,7 @@
 use crate::db::models::{Priority, Task, TaskSource, TaskStatus};
 use crate::db::operations;
 use crate::history::HistoryManager;
+use crate::tui::ansi_parser::AnsiParser;
 use crate::tui::completion::{CompletionEngine, CompletionState};
 use crate::tui::views::terminal::CommandEntry;
 use portable_pty::{CommandBuilder, PtySize};
@@ -71,6 +72,7 @@ pub struct App {
     pub output_search_matches: Vec<(usize, usize, usize)>, // (line_index, start_col, end_col)
     pub output_search_current_match: usize,
     pub output_search_mode: SearchMode,
+    pub ansi_parser: AnsiParser,
 }
 
 pub struct RunningCommand {
@@ -81,6 +83,8 @@ pub struct RunningCommand {
     pub stderr_buffer: Vec<String>,
     pub output_changed: bool,
     pub output_receiver: Option<mpsc::UnboundedReceiver<OutputLine>>,
+    pub uses_alternate_screen: bool,
+    pub live_ansi_parser: Option<crate::tui::ansi_parser::AnsiParser>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +152,7 @@ impl App {
             output_search_matches: Vec::new(),
             output_search_current_match: 0,
             output_search_mode: SearchMode::CaseInsensitive,
+            ansi_parser: AnsiParser::new_with_terminal_size(),
         }
     }
 
@@ -756,10 +761,13 @@ impl App {
         // Create a PTY system
         let pty_system = portable_pty::native_pty_system();
 
-        // Create a PTY with reasonable size (can be made configurable later)
+        // Get actual terminal size for proper display
+        let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+
+        // Create a PTY with actual terminal size
         let pty_pair = pty_system.openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows: term_rows,
+            cols: term_cols,
             pixel_width: 0,
             pixel_height: 0,
         })?;
@@ -831,6 +839,8 @@ impl App {
             stderr_buffer: Vec::new(),
             output_changed: false,
             output_receiver: Some(output_receiver),
+            uses_alternate_screen: false,
+            live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
         })
     }
 
@@ -909,6 +919,8 @@ impl App {
             stderr_buffer: Vec::new(),
             output_changed: false,
             output_receiver: Some(output_receiver),
+            uses_alternate_screen: false,
+            live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
         })
     }
 
@@ -983,7 +995,21 @@ impl App {
                 new_output = true;
                 match output_line {
                     OutputLine::Stdout(line) => {
+                        // Check for alternate screen buffer usage
+                        if line.contains("\x1b[?1049h") || line.contains("\x1b[?1047h") {
+                            running.uses_alternate_screen = true;
+                        }
+
+                        // Check for exit from alternate screen buffer
+                        if line.contains("\x1b[?1049l") || line.contains("\x1b[?1047l") {
+                            running.uses_alternate_screen = false;
+                        }
+
+                        // Store output for real-time display, but handle alternate screen applications specially
                         running.stdout_buffer.push(line);
+
+                        // For alternate screen applications, we'll clean up the buffer when they exit
+                        // This allows the animation to be visible in real-time but cleaned up afterwards
                     }
                     OutputLine::Stderr(line) => {
                         running.stderr_buffer.push(line);
@@ -997,17 +1023,158 @@ impl App {
         }
     }
 
-    fn combine_streamed_output(&self, running: &RunningCommand) -> String {
+    fn combine_streamed_output(&mut self, running: &RunningCommand) -> String {
         let stdout_text = running.stdout_buffer.join("\n");
         let stderr_text = running.stderr_buffer.join("\n");
 
-        if stderr_text.is_empty() {
+        let combined_text = if stderr_text.is_empty() {
             stdout_text
         } else if stdout_text.is_empty() {
             stderr_text
         } else {
             format!("{stdout_text}\n{stderr_text}")
+        };
+
+        // For applications that used alternate screen buffer and have exited it,
+        // return empty output since the screen should be restored to its original state
+        if combined_text.contains("\x1b[?1049l") || combined_text.contains("\x1b[?1047l") {
+            return String::new();
         }
+
+        // For complex escape sequences (screen clearing, animations), use ANSI parser
+        // For regular output with simple colors, pass through directly to preserve ANSI codes
+        if !combined_text.is_empty() && self.needs_complex_ansi_processing(&combined_text) {
+            self.ansi_parser.reset();
+            let parsed_lines = self.ansi_parser.parse(&combined_text);
+
+            // Convert parsed lines back to ANSI codes to preserve colors
+            // This preserves the final output after processing animations and screen clears
+            parsed_lines
+                .into_iter()
+                .map(|line| {
+                    line.spans
+                        .into_iter()
+                        .map(|span| {
+                            // Convert the span back to ANSI codes to preserve colors
+                            let mut result = String::new();
+
+                            // Add color codes if the span has styling
+                            if span.style.fg != Some(ratatui::style::Color::Reset) {
+                                if let Some(color) = span.style.fg {
+                                    match color {
+                                        ratatui::style::Color::Black => result.push_str("\x1b[30m"),
+                                        ratatui::style::Color::Red => result.push_str("\x1b[31m"),
+                                        ratatui::style::Color::Green => result.push_str("\x1b[32m"),
+                                        ratatui::style::Color::Yellow => {
+                                            result.push_str("\x1b[33m")
+                                        }
+                                        ratatui::style::Color::Blue => result.push_str("\x1b[34m"),
+                                        ratatui::style::Color::Magenta => {
+                                            result.push_str("\x1b[35m")
+                                        }
+                                        ratatui::style::Color::Cyan => result.push_str("\x1b[36m"),
+                                        ratatui::style::Color::White => result.push_str("\x1b[37m"),
+                                        ratatui::style::Color::Gray => result.push_str("\x1b[90m"),
+                                        ratatui::style::Color::DarkGray => {
+                                            result.push_str("\x1b[90m")
+                                        }
+                                        ratatui::style::Color::LightRed => {
+                                            result.push_str("\x1b[91m")
+                                        }
+                                        ratatui::style::Color::LightGreen => {
+                                            result.push_str("\x1b[92m")
+                                        }
+                                        ratatui::style::Color::LightYellow => {
+                                            result.push_str("\x1b[93m")
+                                        }
+                                        ratatui::style::Color::LightBlue => {
+                                            result.push_str("\x1b[94m")
+                                        }
+                                        ratatui::style::Color::LightMagenta => {
+                                            result.push_str("\x1b[95m")
+                                        }
+                                        ratatui::style::Color::LightCyan => {
+                                            result.push_str("\x1b[96m")
+                                        }
+                                        _ => {} // Skip other color types for now
+                                    }
+                                }
+                            }
+
+                            // Add background color codes if the span has background styling
+                            if span.style.bg != Some(ratatui::style::Color::Reset) {
+                                if let Some(bg_color) = span.style.bg {
+                                    match bg_color {
+                                        ratatui::style::Color::Black => result.push_str("\x1b[40m"),
+                                        ratatui::style::Color::Red => result.push_str("\x1b[41m"),
+                                        ratatui::style::Color::Green => result.push_str("\x1b[42m"),
+                                        ratatui::style::Color::Yellow => {
+                                            result.push_str("\x1b[43m")
+                                        }
+                                        ratatui::style::Color::Blue => result.push_str("\x1b[44m"),
+                                        ratatui::style::Color::Magenta => {
+                                            result.push_str("\x1b[45m")
+                                        }
+                                        ratatui::style::Color::Cyan => result.push_str("\x1b[46m"),
+                                        ratatui::style::Color::White => result.push_str("\x1b[47m"),
+                                        _ => {} // Skip other background color types for now
+                                    }
+                                }
+                            }
+
+                            // Add modifiers (bold, italic, etc.)
+                            if span
+                                .style
+                                .add_modifier
+                                .contains(ratatui::style::Modifier::BOLD)
+                            {
+                                result.push_str("\x1b[1m");
+                            }
+                            if span
+                                .style
+                                .add_modifier
+                                .contains(ratatui::style::Modifier::ITALIC)
+                            {
+                                result.push_str("\x1b[3m");
+                            }
+                            if span
+                                .style
+                                .add_modifier
+                                .contains(ratatui::style::Modifier::UNDERLINED)
+                            {
+                                result.push_str("\x1b[4m");
+                            }
+
+                            // Add the actual text content
+                            result.push_str(&span.content);
+
+                            // Add reset code if we added any styling
+                            if !result.is_empty() && result != span.content {
+                                result.push_str("\x1b[0m");
+                            }
+
+                            result
+                        })
+                        .collect::<String>()
+                })
+                .collect::<Vec<String>>()
+                .join("\n")
+        } else {
+            // Pass through directly to preserve ANSI color codes for display
+            combined_text
+        }
+    }
+
+    fn needs_complex_ansi_processing(&self, text: &str) -> bool {
+        // Use complex ANSI processing for:
+        // 1. Applications that do screen clearing, cursor positioning, or animations
+        // 2. Any text that contains ANSI escape sequences (to preserve colors)
+        text.contains("\x1b[2J") ||  // Clear screen
+        text.contains("\x1b[H") ||   // Cursor home
+        text.contains("\x1b[?1049h") || // Alternative screen buffer
+        text.contains("\x1b[?1047h") || // Alternative screen buffer
+        (text.matches('\x1b').count() > 10) || // Lots of escape sequences (likely animation)
+        text.contains('\x1b') // Any ANSI escape sequences (including colors)
     }
 
     pub async fn kill_running_command(&mut self) {

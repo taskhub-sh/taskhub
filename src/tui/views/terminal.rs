@@ -1,4 +1,5 @@
-use ansi_to_tui::IntoText;
+use crate::tui::ansi_parser::AnsiParser;
+use crossterm;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -15,26 +16,22 @@ struct HistoryRenderState<'a> {
     current_search_match: usize,
 }
 
-/// Create a ListItem with ANSI color parsing support and tab character expansion
-fn create_ansi_parsed_line(text: &str, fallback_style: Style) -> ListItem<'static> {
+/// Create a ListItem with vtparse ANSI parsing
+fn create_vtparse_parsed_line(text: &str, fallback_style: Style) -> ListItem<'static> {
     // Expand tab characters to spaces (using 8-space tab stops)
     let expanded_text = expand_tabs(text, 8);
 
-    // Try to parse ANSI sequences
-    match expanded_text.into_text() {
-        Ok(parsed_text) => {
-            if let Some(line) = parsed_text.lines.first() {
-                // Successfully parsed ANSI - use the parsed spans
-                ListItem::new(Line::from(line.spans.clone()))
-            } else {
-                // Empty parsed result - fallback to styled text
-                ListItem::new(Line::from(Span::styled(expanded_text, fallback_style)))
-            }
-        }
-        Err(_) => {
-            // Failed to parse ANSI - fallback to styled text
-            ListItem::new(Line::from(Span::styled(expanded_text, fallback_style)))
-        }
+    // Use vtparse to parse ANSI sequences with actual terminal width
+    let (term_width, _) = crossterm::terminal::size().unwrap_or((120, 24));
+    let mut parser = AnsiParser::new(term_width as usize, 1); // Single line parser
+    let parsed_lines = parser.parse(&expanded_text);
+
+    if let Some(parsed_line) = parsed_lines.first() {
+        // Use the parsed line with proper ANSI handling
+        ListItem::new(parsed_line.clone())
+    } else {
+        // Fallback to styled text
+        ListItem::new(Line::from(Span::styled(expanded_text, fallback_style)))
     }
 }
 
@@ -284,12 +281,12 @@ fn draw_command_history(
                             create_selected_line(line.to_string(), 0, len, output_style)
                         }
                     } else {
-                        // Not selected - use ANSI parsing
-                        create_ansi_parsed_line(line, output_style)
+                        // Not selected - use vtparse ANSI parsing
+                        create_vtparse_parsed_line(line, output_style)
                     }
                 } else {
-                    // No selection - use ANSI parsing
-                    create_ansi_parsed_line(line, output_style)
+                    // No selection - use vtparse ANSI parsing
+                    create_vtparse_parsed_line(line, output_style)
                 };
 
                 all_items.push(line_item);

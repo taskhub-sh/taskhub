@@ -2,6 +2,15 @@
 name = "taskhub"
 version = "0.1.0"
 edition = "2024"
+default-run = "taskhub"
+
+[[bin]]
+name = "taskhub"
+path = "src/main.rs"
+
+[[bin]]
+name = "ansi-parser"
+path = "src/bin/ansi_parser.rs"
 
 [dependencies]
 crossterm = "*"
@@ -25,3 +34,5 @@ arboard = { version = "*", features = ["wayland-data-control"] }
 regex = "*"
 ansi-to-tui = "*"
 portable-pty = "*"
+vtparse = "*"
+color-eyre = "0.6.5"
