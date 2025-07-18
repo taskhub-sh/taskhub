@@ -15,24 +15,47 @@ struct HistoryRenderState<'a> {
     current_search_match: usize,
 }
 
-/// Create a ListItem with ANSI color parsing support
+/// Create a ListItem with ANSI color parsing support and tab character expansion
 fn create_ansi_parsed_line(text: &str, fallback_style: Style) -> ListItem<'static> {
+    // Expand tab characters to spaces (using 8-space tab stops)
+    let expanded_text = expand_tabs(text, 8);
+
     // Try to parse ANSI sequences
-    match text.into_text() {
+    match expanded_text.into_text() {
         Ok(parsed_text) => {
             if let Some(line) = parsed_text.lines.first() {
                 // Successfully parsed ANSI - use the parsed spans
                 ListItem::new(Line::from(line.spans.clone()))
             } else {
                 // Empty parsed result - fallback to styled text
-                ListItem::new(Line::from(Span::styled(text.to_string(), fallback_style)))
+                ListItem::new(Line::from(Span::styled(expanded_text, fallback_style)))
             }
         }
         Err(_) => {
             // Failed to parse ANSI - fallback to styled text
-            ListItem::new(Line::from(Span::styled(text.to_string(), fallback_style)))
+            ListItem::new(Line::from(Span::styled(expanded_text, fallback_style)))
         }
     }
+}
+
+/// Expand tab characters to spaces using the specified tab width
+fn expand_tabs(text: &str, tab_width: usize) -> String {
+    let mut result = String::new();
+    let mut column = 0;
+
+    for ch in text.chars() {
+        if ch == '\t' {
+            // Calculate how many spaces to add to reach the next tab stop
+            let spaces_to_add = tab_width - (column % tab_width);
+            result.push_str(&" ".repeat(spaces_to_add));
+            column += spaces_to_add;
+        } else {
+            result.push(ch);
+            column += 1;
+        }
+    }
+
+    result
 }
 
 #[derive(Debug, Clone)]
@@ -420,7 +443,9 @@ fn create_selected_line(
     end_col: usize,
     base_style: Style,
 ) -> ListItem<'static> {
-    let chars: Vec<char> = text.chars().collect();
+    // Expand tab characters to spaces first
+    let expanded_text = expand_tabs(&text, 8);
+    let chars: Vec<char> = expanded_text.chars().collect();
     let mut spans = Vec::new();
 
     // Add text before selection
@@ -591,7 +616,9 @@ fn create_line_with_search_highlights(
     _selection_bounds: Option<((usize, usize), (usize, usize))>,
     _line_index: usize,
 ) -> ListItem<'static> {
-    let chars: Vec<char> = text.chars().collect();
+    // Expand tab characters to spaces first
+    let expanded_text = expand_tabs(&text, 8);
+    let chars: Vec<char> = expanded_text.chars().collect();
     let mut spans = Vec::new();
     let mut pos = 0;
 
