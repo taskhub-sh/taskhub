@@ -56,12 +56,8 @@ fn draw(frame: &mut Frame, ansi_content: &str) {
         lines
     };
 
-    // For now, just display the first line
-    let line = display_lines
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| Line::from("Empty"));
-    let paragraph = Paragraph::new(line);
+    // Display all lines
+    let paragraph = Paragraph::new(display_lines);
 
     frame.render_widget(paragraph, frame.area());
 }
