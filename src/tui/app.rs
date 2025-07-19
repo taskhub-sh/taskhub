@@ -727,23 +727,29 @@ impl App {
             return;
         }
 
+        // Reset ANSI parser state before command execution to ensure consistent processing
+        self.ansi_parser.reset();
+
         // Try PTY execution first for better color support
-        if let Ok(running_cmd) = self.execute_command_with_pty(&command).await {
-            self.running_command = Some(running_cmd);
+        let running_cmd = if let Ok(running_cmd) = self.execute_command_with_pty(&command).await {
+            running_cmd
         } else {
             // Fallback to regular pipes if PTY fails
-            if let Ok(running_cmd) = self.execute_command_with_pipes(&command).await {
-                self.running_command = Some(running_cmd);
-            } else {
-                let entry = CommandEntry {
-                    command,
-                    output: "Error: Failed to execute command".to_string(),
-                    success: false,
-                };
-                self.add_command_entry(entry).await;
-                return;
+            match self.execute_command_with_pipes(&command).await {
+                Ok(running_cmd) => running_cmd,
+                Err(_) => {
+                    let entry = CommandEntry {
+                        command,
+                        output: "Error: Failed to execute command".to_string(),
+                        success: false,
+                    };
+                    self.add_command_entry(entry).await;
+                    return;
+                }
             }
-        }
+        };
+
+        self.running_command = Some(running_cmd);
 
         // Add initial entry to command history
         let entry = CommandEntry {
@@ -947,8 +953,13 @@ impl App {
             };
 
             if command_finished {
-                // Command finished, do final output read
-                self.read_streaming_output(&mut running).await;
+                // Command finished, do multiple final output reads to ensure all data is captured
+                // This addresses the race condition where output may still be in the channel
+                for _ in 0..3 {
+                    self.read_streaming_output(&mut running).await;
+                    // Small delay to allow any remaining output to arrive
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+                }
 
                 // Combine all buffered output
                 let combined_output = self.combine_streamed_output(&running);
@@ -1059,8 +1070,8 @@ impl App {
                             let mut result = String::new();
 
                             // Add color codes if the span has styling
-                            if span.style.fg != Some(ratatui::style::Color::Reset) {
-                                if let Some(color) = span.style.fg {
+                            if let Some(color) = span.style.fg {
+                                if color != ratatui::style::Color::Reset {
                                     match color {
                                         ratatui::style::Color::Black => result.push_str("\x1b[30m"),
                                         ratatui::style::Color::Red => result.push_str("\x1b[31m"),
@@ -1102,8 +1113,8 @@ impl App {
                             }
 
                             // Add background color codes if the span has background styling
-                            if span.style.bg != Some(ratatui::style::Color::Reset) {
-                                if let Some(bg_color) = span.style.bg {
+                            if let Some(bg_color) = span.style.bg {
+                                if bg_color != ratatui::style::Color::Reset {
                                     match bg_color {
                                         ratatui::style::Color::Black => result.push_str("\x1b[40m"),
                                         ratatui::style::Color::Red => result.push_str("\x1b[41m"),
