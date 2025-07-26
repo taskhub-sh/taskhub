@@ -381,7 +381,7 @@ impl AnsiParser {
             .collect()
     }
 
-    fn parse_line_with_vtparse(&mut self, line: &str) -> Line<'static> {
+    pub fn parse_line_with_vtparse(&mut self, line: &str) -> Line<'static> {
         // Handle tabs by converting them to spaces before processing
         let processed_line = self.expand_tabs(line);
 
