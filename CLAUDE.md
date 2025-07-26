@@ -165,3 +165,19 @@ The terminal interface includes several built-in commands:
 ## Design Principles
 
 - Prefer to use the applications database for persistent storage when possible instead of additional files
+
+## MCP Usage
+
+### terminal-driver-mcp
+
+The terminal-driver-mcp is used to run applications with TTY and debug them by controlling them like a puppeteer. Here is how to use it
+in the context of taskhub.
+
+* Start taskhub by using the tool `terminal_launch with command="cargo run"
+* Enter terminal commands by using:
+  * terminal_input with input_text to enter the command itself - for example `ls -la`
+  * terminal_input with key to enter special keyboard keys - for example `Return`
+* Then capture a screen shot with `terminal_capture`
+* Close the session when done with `terminal_close`
+
+You can repeat this process for any program using a TTY which you cannot debug directly.
