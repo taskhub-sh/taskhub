@@ -1052,152 +1052,124 @@ impl App {
             return String::new();
         }
 
-        // For complex escape sequences (screen clearing, animations), use ANSI parser
-        // For regular output with simple colors, pass through directly to preserve ANSI codes
-        if !combined_text.is_empty() && self.needs_complex_ansi_processing(&combined_text) {
+        // Only use ANSI parser for complex sequences that need filtering (animations, screen clearing)
+        // For simple color codes, pass through directly to preserve them efficiently
+        if !combined_text.is_empty() && self.needs_animation_filtering(&combined_text) {
+            // Use ANSI parser to filter out animation sequences but preserve final state
             self.ansi_parser.reset();
             let parsed_lines = self.ansi_parser.parse(&combined_text);
 
-            // Convert parsed lines back to ANSI codes to preserve colors
-            // This preserves the final output after processing animations and screen clears
+            // Convert back to ANSI but with a simpler approach than before
             parsed_lines
                 .into_iter()
                 .map(|line| {
                     line.spans
                         .into_iter()
-                        .map(|span| {
-                            // Convert the span back to ANSI codes to preserve colors
-                            let mut result = String::new();
-
-                            // Add color codes if the span has styling
-                            if let Some(color) = span.style.fg {
-                                if color != ratatui::style::Color::Reset {
-                                    match color {
-                                        ratatui::style::Color::Black => result.push_str("\x1b[30m"),
-                                        ratatui::style::Color::Red => result.push_str("\x1b[31m"),
-                                        ratatui::style::Color::Green => result.push_str("\x1b[32m"),
-                                        ratatui::style::Color::Yellow => {
-                                            result.push_str("\x1b[33m")
-                                        }
-                                        ratatui::style::Color::Blue => result.push_str("\x1b[34m"),
-                                        ratatui::style::Color::Magenta => {
-                                            result.push_str("\x1b[35m")
-                                        }
-                                        ratatui::style::Color::Cyan => result.push_str("\x1b[36m"),
-                                        ratatui::style::Color::White => result.push_str("\x1b[37m"),
-                                        ratatui::style::Color::Gray => result.push_str("\x1b[90m"),
-                                        ratatui::style::Color::DarkGray => {
-                                            result.push_str("\x1b[90m")
-                                        }
-                                        ratatui::style::Color::LightRed => {
-                                            result.push_str("\x1b[91m")
-                                        }
-                                        ratatui::style::Color::LightGreen => {
-                                            result.push_str("\x1b[92m")
-                                        }
-                                        ratatui::style::Color::LightYellow => {
-                                            result.push_str("\x1b[93m")
-                                        }
-                                        ratatui::style::Color::LightBlue => {
-                                            result.push_str("\x1b[94m")
-                                        }
-                                        ratatui::style::Color::LightMagenta => {
-                                            result.push_str("\x1b[95m")
-                                        }
-                                        ratatui::style::Color::LightCyan => {
-                                            result.push_str("\x1b[96m")
-                                        }
-                                        ratatui::style::Color::Rgb(r, g, b) => {
-                                            result.push_str(&format!("\x1b[38;2;{r};{g};{b}m"))
-                                        }
-                                        ratatui::style::Color::Indexed(i) => {
-                                            result.push_str(&format!("\x1b[38;5;{i}m"))
-                                        }
-                                        _ => {} // Skip other color types for now
-                                    }
-                                }
-                            }
-
-                            // Add background color codes if the span has background styling
-                            if let Some(bg_color) = span.style.bg {
-                                if bg_color != ratatui::style::Color::Reset {
-                                    match bg_color {
-                                        ratatui::style::Color::Black => result.push_str("\x1b[40m"),
-                                        ratatui::style::Color::Red => result.push_str("\x1b[41m"),
-                                        ratatui::style::Color::Green => result.push_str("\x1b[42m"),
-                                        ratatui::style::Color::Yellow => {
-                                            result.push_str("\x1b[43m")
-                                        }
-                                        ratatui::style::Color::Blue => result.push_str("\x1b[44m"),
-                                        ratatui::style::Color::Magenta => {
-                                            result.push_str("\x1b[45m")
-                                        }
-                                        ratatui::style::Color::Cyan => result.push_str("\x1b[46m"),
-                                        ratatui::style::Color::White => result.push_str("\x1b[47m"),
-                                        ratatui::style::Color::Rgb(r, g, b) => {
-                                            result.push_str(&format!("\x1b[48;2;{r};{g};{b}m"))
-                                        }
-                                        ratatui::style::Color::Indexed(i) => {
-                                            result.push_str(&format!("\x1b[48;5;{i}m"))
-                                        }
-                                        _ => {} // Skip other background color types for now
-                                    }
-                                }
-                            }
-
-                            // Add modifiers (bold, italic, etc.)
-                            if span
-                                .style
-                                .add_modifier
-                                .contains(ratatui::style::Modifier::BOLD)
-                            {
-                                result.push_str("\x1b[1m");
-                            }
-                            if span
-                                .style
-                                .add_modifier
-                                .contains(ratatui::style::Modifier::ITALIC)
-                            {
-                                result.push_str("\x1b[3m");
-                            }
-                            if span
-                                .style
-                                .add_modifier
-                                .contains(ratatui::style::Modifier::UNDERLINED)
-                            {
-                                result.push_str("\x1b[4m");
-                            }
-
-                            // Add the actual text content
-                            result.push_str(&span.content);
-
-                            // Add reset code if we added any styling
-                            if !result.is_empty() && result != span.content {
-                                result.push_str("\x1b[0m");
-                            }
-
-                            result
-                        })
+                        .map(|span| self.span_to_ansi_string(span))
                         .collect::<String>()
                 })
                 .collect::<Vec<String>>()
                 .join("\n")
         } else {
-            // Pass through directly to preserve ANSI color codes for display
+            // Pass through directly to preserve ANSI color codes efficiently
             combined_text
         }
     }
 
-    fn needs_complex_ansi_processing(&self, text: &str) -> bool {
-        // Use complex ANSI processing for:
-        // 1. Applications that do screen clearing, cursor positioning, or animations
-        // 2. Any text that contains ANSI escape sequences (to preserve colors)
+    fn span_to_ansi_string(&self, span: ratatui::text::Span) -> String {
+        let mut result = String::new();
+
+        // Add foreground color if present
+        if let Some(color) = span.style.fg {
+            match color {
+                ratatui::style::Color::Black => result.push_str("\x1b[30m"),
+                ratatui::style::Color::Red => result.push_str("\x1b[31m"),
+                ratatui::style::Color::Green => result.push_str("\x1b[32m"),
+                ratatui::style::Color::Yellow => result.push_str("\x1b[33m"),
+                ratatui::style::Color::Blue => result.push_str("\x1b[34m"),
+                ratatui::style::Color::Magenta => result.push_str("\x1b[35m"),
+                ratatui::style::Color::Cyan => result.push_str("\x1b[36m"),
+                ratatui::style::Color::White => result.push_str("\x1b[37m"),
+                ratatui::style::Color::Gray | ratatui::style::Color::DarkGray => {
+                    result.push_str("\x1b[90m")
+                }
+                ratatui::style::Color::LightRed => result.push_str("\x1b[91m"),
+                ratatui::style::Color::LightGreen => result.push_str("\x1b[92m"),
+                ratatui::style::Color::LightYellow => result.push_str("\x1b[93m"),
+                ratatui::style::Color::LightBlue => result.push_str("\x1b[94m"),
+                ratatui::style::Color::LightMagenta => result.push_str("\x1b[95m"),
+                ratatui::style::Color::LightCyan => result.push_str("\x1b[96m"),
+                ratatui::style::Color::Rgb(r, g, b) => {
+                    result.push_str(&format!("\x1b[38;2;{r};{g};{b}m"))
+                }
+                ratatui::style::Color::Indexed(i) => result.push_str(&format!("\x1b[38;5;{i}m")),
+                _ => {}
+            }
+        }
+
+        // Add background color if present
+        if let Some(bg_color) = span.style.bg {
+            match bg_color {
+                ratatui::style::Color::Black => result.push_str("\x1b[40m"),
+                ratatui::style::Color::Red => result.push_str("\x1b[41m"),
+                ratatui::style::Color::Green => result.push_str("\x1b[42m"),
+                ratatui::style::Color::Yellow => result.push_str("\x1b[43m"),
+                ratatui::style::Color::Blue => result.push_str("\x1b[44m"),
+                ratatui::style::Color::Magenta => result.push_str("\x1b[45m"),
+                ratatui::style::Color::Cyan => result.push_str("\x1b[46m"),
+                ratatui::style::Color::White => result.push_str("\x1b[47m"),
+                ratatui::style::Color::Rgb(r, g, b) => {
+                    result.push_str(&format!("\x1b[48;2;{r};{g};{b}m"))
+                }
+                ratatui::style::Color::Indexed(i) => result.push_str(&format!("\x1b[48;5;{i}m")),
+                _ => {}
+            }
+        }
+
+        // Add modifiers
+        if span
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD)
+        {
+            result.push_str("\x1b[1m");
+        }
+        if span
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::ITALIC)
+        {
+            result.push_str("\x1b[3m");
+        }
+        if span
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+        {
+            result.push_str("\x1b[4m");
+        }
+
+        // Add the text content
+        result.push_str(&span.content);
+
+        // Add reset if we added any styling
+        if result != span.content {
+            result.push_str("\x1b[0m");
+        }
+
+        result
+    }
+
+    fn needs_animation_filtering(&self, text: &str) -> bool {
+        // Only use ANSI parser for applications that need filtering of complex sequences:
+        // 1. Screen clearing and cursor positioning (animations)
+        // 2. Lots of escape sequences that might be animations
+        // Note: Simple color codes are passed through directly for efficiency
         text.contains("\x1b[2J") ||  // Clear screen
         text.contains("\x1b[H") ||   // Cursor home
         text.contains("\x1b[?1049h") || // Alternative screen buffer
         text.contains("\x1b[?1047h") || // Alternative screen buffer
-        (text.matches('\x1b').count() > 10) || // Lots of escape sequences (likely animation)
-        text.contains('\x1b') // Any ANSI escape sequences (including colors)
+        (text.matches('\x1b').count() > 10) // Lots of escape sequences (likely animation)
     }
 
     pub async fn kill_running_command(&mut self) {
