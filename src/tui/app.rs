@@ -1107,6 +1107,12 @@ impl App {
                                         ratatui::style::Color::LightCyan => {
                                             result.push_str("\x1b[96m")
                                         }
+                                        ratatui::style::Color::Rgb(r, g, b) => {
+                                            result.push_str(&format!("\x1b[38;2;{r};{g};{b}m"))
+                                        }
+                                        ratatui::style::Color::Indexed(i) => {
+                                            result.push_str(&format!("\x1b[38;5;{i}m"))
+                                        }
                                         _ => {} // Skip other color types for now
                                     }
                                 }
@@ -1128,6 +1134,12 @@ impl App {
                                         }
                                         ratatui::style::Color::Cyan => result.push_str("\x1b[46m"),
                                         ratatui::style::Color::White => result.push_str("\x1b[47m"),
+                                        ratatui::style::Color::Rgb(r, g, b) => {
+                                            result.push_str(&format!("\x1b[48;2;{r};{g};{b}m"))
+                                        }
+                                        ratatui::style::Color::Indexed(i) => {
+                                            result.push_str(&format!("\x1b[48;5;{i}m"))
+                                        }
                                         _ => {} // Skip other background color types for now
                                     }
                                 }

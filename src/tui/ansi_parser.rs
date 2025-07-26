@@ -2200,4 +2200,116 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].to_string(), "RedGreenBlue");
     }
+
+    #[test]
+    fn test_rgb_color_conversion_preservation() {
+        // Test that RGB colors are properly converted back to ANSI sequences
+        // This test catches the bug where 24-bit colors were being ignored
+        // in the combine_streamed_output function
+        let mut parser = AnsiParser::new(80, 24);
+
+        // Parse a 24-bit RGB sequence
+        let rgb_sequence = "\x1b[38;2;255;128;64mOrange\x1b[0m";
+        let lines = parser.parse(rgb_sequence);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].to_string(), "Orange");
+
+        // The key test: verify that the line contains styled spans with RGB colors
+        let line = &lines[0];
+        let spans = &line.spans;
+
+        // Should have at least one span with RGB color
+        assert!(!spans.is_empty(), "Line should have styled spans");
+
+        // Find the span with our orange color
+        let orange_span = spans.iter().find(|span| {
+            if let Some(ratatui::style::Color::Rgb(r, g, b)) = span.style.fg {
+                r == 255 && g == 128 && b == 64
+            } else {
+                false
+            }
+        });
+
+        assert!(
+            orange_span.is_some(),
+            "Should find a span with RGB(255, 128, 64) color"
+        );
+        assert_eq!(orange_span.unwrap().content, "Orange");
+    }
+
+    #[test]
+    fn test_256_color_conversion_preservation() {
+        // Test that 256-color indexed colors are properly preserved
+        let mut parser = AnsiParser::new(80, 24);
+
+        // Parse a 256-color sequence (color index 196 = bright red)
+        let color256_sequence = "\x1b[38;5;196mBrightRed\x1b[0m";
+        let lines = parser.parse(color256_sequence);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].to_string(), "BrightRed");
+
+        // Verify the line contains the expected indexed color
+        let line = &lines[0];
+        let spans = &line.spans;
+
+        assert!(!spans.is_empty(), "Line should have styled spans");
+
+        // The 256-color should be converted to RGB by the parser
+        // Color index 196 should map to RGB(255, 0, 0) - bright red
+        let red_span = spans.iter().find(|span| {
+            if let Some(ratatui::style::Color::Rgb(r, g, b)) = span.style.fg {
+                r == 255 && g == 0 && b == 0
+            } else {
+                false
+            }
+        });
+
+        assert!(
+            red_span.is_some(),
+            "Should find a span with RGB(255, 0, 0) color from 256-color index 196"
+        );
+        assert_eq!(red_span.unwrap().content, "BrightRed");
+    }
+
+    #[test]
+    fn test_mixed_basic_and_rgb_colors() {
+        // Test that basic colors and RGB colors work together correctly
+        let mut parser = AnsiParser::new(80, 24);
+
+        let mixed_sequence = "\x1b[31mBasicRed\x1b[38;2;0;255;0mRGBGreen\x1b[34mBasicBlue\x1b[0m";
+        let lines = parser.parse(mixed_sequence);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].to_string(), "BasicRedRGBGreenBasicBlue");
+
+        let line = &lines[0];
+        let spans = &line.spans;
+
+        // Should have multiple spans with different colors
+        assert!(
+            spans.len() >= 3,
+            "Should have at least 3 spans for different colors"
+        );
+
+        // Find spans with different color types
+        let basic_red = spans
+            .iter()
+            .any(|span| span.style.fg == Some(ratatui::style::Color::Red));
+        let rgb_green = spans.iter().any(|span| {
+            if let Some(ratatui::style::Color::Rgb(r, g, b)) = span.style.fg {
+                r == 0 && g == 255 && b == 0
+            } else {
+                false
+            }
+        });
+        let basic_blue = spans
+            .iter()
+            .any(|span| span.style.fg == Some(ratatui::style::Color::Blue));
+
+        assert!(basic_red, "Should have basic red color");
+        assert!(rgb_green, "Should have RGB green color");
+        assert!(basic_blue, "Should have basic blue color");
+    }
 }
