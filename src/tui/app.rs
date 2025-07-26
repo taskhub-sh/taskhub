@@ -1624,23 +1624,27 @@ impl App {
         if let Some(ref mut clipboard) = self.clipboard {
             match clipboard.get_text() {
                 Ok(text) => {
-                    // Insert text at current cursor position
-                    let mut chars: Vec<char> = self.current_input.chars().collect();
-                    let cursor_pos = self.cursor_position.min(chars.len());
+                    // Filter clipboard text to remove control characters (except tab)
+                    let filtered_text: String = text
+                        .chars()
+                        .filter(|&ch| !ch.is_control() || ch == '\t')
+                        .collect();
 
-                    // Insert clipboard text character by character
-                    let mut char_count = 0;
-                    for ch in text.chars() {
-                        // Skip newlines and other control characters for single-line input
-                        if ch.is_control() && ch != '\t' {
-                            continue;
-                        }
-                        chars.insert(cursor_pos + char_count, ch);
-                        char_count += 1;
+                    if filtered_text.is_empty() {
+                        return Ok(());
                     }
 
-                    self.current_input = chars.into_iter().collect();
-                    self.cursor_position = cursor_pos + char_count;
+                    // Get current input as chars and find cursor position
+                    let current_chars: Vec<char> = self.current_input.chars().collect();
+                    let cursor_pos = self.cursor_position.min(current_chars.len());
+
+                    // Optimized insertion: split current input at cursor and reconstruct
+                    let before_cursor: String = current_chars[..cursor_pos].iter().collect();
+                    let after_cursor: String = current_chars[cursor_pos..].iter().collect();
+
+                    // Construct new input in one operation
+                    self.current_input = format!("{before_cursor}{filtered_text}{after_cursor}");
+                    self.cursor_position = cursor_pos + filtered_text.chars().count();
 
                     Ok(())
                 }
