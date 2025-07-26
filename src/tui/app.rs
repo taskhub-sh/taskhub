@@ -3,7 +3,7 @@ use crate::db::operations;
 use crate::history::HistoryManager;
 use crate::tui::ansi_parser::AnsiParser;
 use crate::tui::completion::{CompletionEngine, CompletionState};
-use crate::tui::views::terminal::CommandEntry;
+use crate::tui::views::terminal::{CommandEntry, process_output_with_carriage_returns};
 use portable_pty::{CommandBuilder, PtySize};
 use regex::Regex;
 use sqlx::SqlitePool;
@@ -81,6 +81,8 @@ pub struct RunningCommand {
     pub pty_child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
     pub stdout_buffer: Vec<String>,
     pub stderr_buffer: Vec<String>,
+    pub current_stdout_line: String, // Buffer for current line being built
+    pub current_stderr_line: String, // Buffer for current stderr line being built
     pub output_changed: bool,
     pub output_receiver: Option<mpsc::UnboundedReceiver<OutputLine>>,
     pub uses_alternate_screen: bool,
@@ -94,6 +96,46 @@ pub enum OutputLine {
 }
 
 impl App {
+    /// Process streaming output handling carriage returns properly for progress bars
+    fn process_streaming_output(
+        data: &str,
+        sender: &mpsc::UnboundedSender<OutputLine>,
+        is_stdout: bool,
+    ) {
+        // Note: This is a simplified version. For full streaming support,
+        // we'd need to maintain state between calls, but this handles
+        // the basic case where a complete update comes in one chunk
+        for ch in data.chars() {
+            match ch {
+                '\n' => {
+                    // Send the current line and start a new one
+                    // For now, we'll send each chunk as received
+                    // A more complete implementation would accumulate lines
+                }
+                '\r' => {
+                    // Carriage return - this would reset the current line
+                    // For now, we'll treat this as a line separator for progress bars
+                }
+                _ => {
+                    // Regular character
+                }
+            }
+        }
+
+        // For now, let's use a simpler approach and just send the data as lines
+        // but split on both \n and \r for progress bar support
+        let processed_lines = process_output_with_carriage_returns(data);
+        for line in processed_lines {
+            if !line.is_empty() {
+                let output_line = if is_stdout {
+                    OutputLine::Stdout(line)
+                } else {
+                    OutputLine::Stderr(line)
+                };
+                let _ = sender.send(output_line);
+            }
+        }
+    }
     pub fn new(db_pool: SqlitePool) -> Self {
         let available_commands = vec![
             "/quit".to_string(),
@@ -820,10 +862,8 @@ impl App {
                         // Convert bytes to string, handling potential invalid UTF-8
                         let output = String::from_utf8_lossy(&buffer[..n]);
 
-                        // Split by lines and send each line
-                        for line in output.lines() {
-                            let _ = output_sender.send(OutputLine::Stdout(line.to_string()));
-                        }
+                        // Process output handling carriage returns properly
+                        Self::process_streaming_output(&output, &output_sender, true);
 
                         // Handle partial lines (data without newline at end)
                         if !output.ends_with('\n') && !output.is_empty() {
@@ -843,6 +883,8 @@ impl App {
             pty_child: Some(pty_child),
             stdout_buffer: Vec::new(),
             stderr_buffer: Vec::new(),
+            current_stdout_line: String::new(),
+            current_stderr_line: String::new(),
             output_changed: false,
             output_receiver: Some(output_receiver),
             uses_alternate_screen: false,
@@ -923,6 +965,8 @@ impl App {
             pty_child: None,
             stdout_buffer: Vec::new(),
             stderr_buffer: Vec::new(),
+            current_stdout_line: String::new(),
+            current_stderr_line: String::new(),
             output_changed: false,
             output_receiver: Some(output_receiver),
             uses_alternate_screen: false,
@@ -1016,7 +1060,16 @@ impl App {
                             running.uses_alternate_screen = false;
                         }
 
-                        // Store output for real-time display, but handle alternate screen applications specially
+                        // Store output for real-time display, but handle progress bars specially
+                        // If this looks like a progress bar update (contains \r), replace the last line
+                        if line.contains('\r')
+                            || (line.contains('%') && (line.contains('|') || line.contains('[')))
+                        {
+                            // This looks like a progress bar - replace the last line if it exists
+                            if !running.stdout_buffer.is_empty() {
+                                running.stdout_buffer.pop();
+                            }
+                        }
                         running.stdout_buffer.push(line);
 
                         // For alternate screen applications, we'll clean up the buffer when they exit
@@ -1207,7 +1260,7 @@ impl App {
             total_lines += 1;
             // Output lines
             if !entry.output.is_empty() {
-                total_lines += entry.output.lines().count();
+                total_lines += process_output_with_carriage_returns(&entry.output).len();
             }
             // Empty spacing line
             total_lines += 1;
@@ -1503,8 +1556,8 @@ impl App {
             for entry in &self.command_history {
                 lines.push(format!("> {}", entry.command));
                 if !entry.output.is_empty() {
-                    for line in entry.output.lines() {
-                        lines.push(line.to_string());
+                    for line in process_output_with_carriage_returns(&entry.output) {
+                        lines.push(line);
                     }
                 }
                 lines.push(String::new()); // Empty line for spacing
@@ -1790,7 +1843,7 @@ impl App {
 
             // Output lines
             if !entry.output.is_empty() {
-                all_items_count += entry.output.lines().count();
+                all_items_count += process_output_with_carriage_returns(&entry.output).len();
             }
 
             // Empty line for spacing
@@ -2062,9 +2115,9 @@ impl App {
 
             // Search in output lines
             if !entry.output.is_empty() {
-                for line in entry.output.lines() {
+                for line in process_output_with_carriage_returns(&entry.output) {
                     Self::search_in_text_static(
-                        line,
+                        &line,
                         line_index,
                         &search_query,
                         &search_mode,

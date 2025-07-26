@@ -55,6 +55,43 @@ fn expand_tabs(text: &str, tab_width: usize) -> String {
     result
 }
 
+/// Process output text to handle carriage returns properly for progress bars
+/// Carriage returns (\r) should overwrite the current line, not create new lines
+pub fn process_output_with_carriage_returns(output: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+
+    for ch in output.chars() {
+        match ch {
+            '\n' => {
+                // Newline: commit current line and start a new one
+                lines.push(current_line.clone());
+                current_line.clear();
+            }
+            '\r' => {
+                // Carriage return: reset current line (overwrite mode)
+                current_line.clear();
+            }
+            _ => {
+                // Regular character: add to current line
+                current_line.push(ch);
+            }
+        }
+    }
+
+    // Add the final line if it's not empty
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+
+    // If we have no lines but the input wasn't empty, add at least one empty line
+    if lines.is_empty() && !output.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandEntry {
     pub command: String,
@@ -239,7 +276,9 @@ fn draw_command_history(
                 Style::default().fg(Color::White)
             };
 
-            for line in entry.output.lines() {
+            // Split output handling carriage returns for progress bars
+            let processed_lines = process_output_with_carriage_returns(&entry.output);
+            for line in processed_lines {
                 // Check if this line has search matches
                 let search_matches_for_line: Vec<(usize, (usize, usize, usize))> = render_state
                     .search_matches
@@ -282,11 +321,11 @@ fn draw_command_history(
                         }
                     } else {
                         // Not selected - use vtparse ANSI parsing
-                        create_vtparse_parsed_line(line, output_style)
+                        create_vtparse_parsed_line(&line, output_style)
                     }
                 } else {
                     // No selection - use vtparse ANSI parsing
-                    create_vtparse_parsed_line(line, output_style)
+                    create_vtparse_parsed_line(&line, output_style)
                 };
 
                 all_items.push(line_item);
