@@ -1,6 +1,7 @@
 use crate::db::models::{Priority, Task, TaskSource, TaskStatus};
 use crate::db::operations;
 use crate::history::HistoryManager;
+use crate::tui::ansi_parser::AnsiParser;
 use crate::tui::completion::{CompletionEngine, CompletionState};
 use crate::tui::views::terminal::CommandEntry;
 use portable_pty::{CommandBuilder, PtySize};
@@ -71,6 +72,7 @@ pub struct App {
     pub output_search_matches: Vec<(usize, usize, usize)>, // (line_index, start_col, end_col)
     pub output_search_current_match: usize,
     pub output_search_mode: SearchMode,
+    pub ansi_parser: AnsiParser,
 }
 
 pub struct RunningCommand {
@@ -81,6 +83,8 @@ pub struct RunningCommand {
     pub stderr_buffer: Vec<String>,
     pub output_changed: bool,
     pub output_receiver: Option<mpsc::UnboundedReceiver<OutputLine>>,
+    pub uses_alternate_screen: bool,
+    pub live_ansi_parser: Option<crate::tui::ansi_parser::AnsiParser>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +152,7 @@ impl App {
             output_search_matches: Vec::new(),
             output_search_current_match: 0,
             output_search_mode: SearchMode::CaseInsensitive,
+            ansi_parser: AnsiParser::new_with_terminal_size(),
         }
     }
 
@@ -722,23 +727,29 @@ impl App {
             return;
         }
 
+        // Reset ANSI parser state before command execution to ensure consistent processing
+        self.ansi_parser.reset();
+
         // Try PTY execution first for better color support
-        if let Ok(running_cmd) = self.execute_command_with_pty(&command).await {
-            self.running_command = Some(running_cmd);
+        let running_cmd = if let Ok(running_cmd) = self.execute_command_with_pty(&command).await {
+            running_cmd
         } else {
             // Fallback to regular pipes if PTY fails
-            if let Ok(running_cmd) = self.execute_command_with_pipes(&command).await {
-                self.running_command = Some(running_cmd);
-            } else {
-                let entry = CommandEntry {
-                    command,
-                    output: "Error: Failed to execute command".to_string(),
-                    success: false,
-                };
-                self.add_command_entry(entry).await;
-                return;
+            match self.execute_command_with_pipes(&command).await {
+                Ok(running_cmd) => running_cmd,
+                Err(_) => {
+                    let entry = CommandEntry {
+                        command,
+                        output: "Error: Failed to execute command".to_string(),
+                        success: false,
+                    };
+                    self.add_command_entry(entry).await;
+                    return;
+                }
             }
-        }
+        };
+
+        self.running_command = Some(running_cmd);
 
         // Add initial entry to command history
         let entry = CommandEntry {
@@ -756,10 +767,13 @@ impl App {
         // Create a PTY system
         let pty_system = portable_pty::native_pty_system();
 
-        // Create a PTY with reasonable size (can be made configurable later)
+        // Get actual terminal size for proper display
+        let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+
+        // Create a PTY with actual terminal size
         let pty_pair = pty_system.openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows: term_rows,
+            cols: term_cols,
             pixel_width: 0,
             pixel_height: 0,
         })?;
@@ -831,6 +845,8 @@ impl App {
             stderr_buffer: Vec::new(),
             output_changed: false,
             output_receiver: Some(output_receiver),
+            uses_alternate_screen: false,
+            live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
         })
     }
 
@@ -909,6 +925,8 @@ impl App {
             stderr_buffer: Vec::new(),
             output_changed: false,
             output_receiver: Some(output_receiver),
+            uses_alternate_screen: false,
+            live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
         })
     }
 
@@ -935,8 +953,13 @@ impl App {
             };
 
             if command_finished {
-                // Command finished, do final output read
-                self.read_streaming_output(&mut running).await;
+                // Command finished, do multiple final output reads to ensure all data is captured
+                // This addresses the race condition where output may still be in the channel
+                for _ in 0..3 {
+                    self.read_streaming_output(&mut running).await;
+                    // Small delay to allow any remaining output to arrive
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+                }
 
                 // Combine all buffered output
                 let combined_output = self.combine_streamed_output(&running);
@@ -983,7 +1006,21 @@ impl App {
                 new_output = true;
                 match output_line {
                     OutputLine::Stdout(line) => {
+                        // Check for alternate screen buffer usage
+                        if line.contains("\x1b[?1049h") || line.contains("\x1b[?1047h") {
+                            running.uses_alternate_screen = true;
+                        }
+
+                        // Check for exit from alternate screen buffer
+                        if line.contains("\x1b[?1049l") || line.contains("\x1b[?1047l") {
+                            running.uses_alternate_screen = false;
+                        }
+
+                        // Store output for real-time display, but handle alternate screen applications specially
                         running.stdout_buffer.push(line);
+
+                        // For alternate screen applications, we'll clean up the buffer when they exit
+                        // This allows the animation to be visible in real-time but cleaned up afterwards
                     }
                     OutputLine::Stderr(line) => {
                         running.stderr_buffer.push(line);
@@ -997,17 +1034,142 @@ impl App {
         }
     }
 
-    fn combine_streamed_output(&self, running: &RunningCommand) -> String {
+    fn combine_streamed_output(&mut self, running: &RunningCommand) -> String {
         let stdout_text = running.stdout_buffer.join("\n");
         let stderr_text = running.stderr_buffer.join("\n");
 
-        if stderr_text.is_empty() {
+        let combined_text = if stderr_text.is_empty() {
             stdout_text
         } else if stdout_text.is_empty() {
             stderr_text
         } else {
             format!("{stdout_text}\n{stderr_text}")
+        };
+
+        // For applications that used alternate screen buffer and have exited it,
+        // return empty output since the screen should be restored to its original state
+        if combined_text.contains("\x1b[?1049l") || combined_text.contains("\x1b[?1047l") {
+            return String::new();
         }
+
+        // Only use ANSI parser for complex sequences that need filtering (animations, screen clearing)
+        // For simple color codes, pass through directly to preserve them efficiently
+        if !combined_text.is_empty() && self.needs_animation_filtering(&combined_text) {
+            // Use ANSI parser to filter out animation sequences but preserve final state
+            self.ansi_parser.reset();
+            let parsed_lines = self.ansi_parser.parse(&combined_text);
+
+            // Convert back to ANSI but with a simpler approach than before
+            parsed_lines
+                .into_iter()
+                .map(|line| {
+                    line.spans
+                        .into_iter()
+                        .map(|span| self.span_to_ansi_string(span))
+                        .collect::<String>()
+                })
+                .collect::<Vec<String>>()
+                .join("\n")
+        } else {
+            // Pass through directly to preserve ANSI color codes efficiently
+            combined_text
+        }
+    }
+
+    fn span_to_ansi_string(&self, span: ratatui::text::Span) -> String {
+        let mut result = String::new();
+
+        // Add foreground color if present
+        if let Some(color) = span.style.fg {
+            match color {
+                ratatui::style::Color::Black => result.push_str("\x1b[30m"),
+                ratatui::style::Color::Red => result.push_str("\x1b[31m"),
+                ratatui::style::Color::Green => result.push_str("\x1b[32m"),
+                ratatui::style::Color::Yellow => result.push_str("\x1b[33m"),
+                ratatui::style::Color::Blue => result.push_str("\x1b[34m"),
+                ratatui::style::Color::Magenta => result.push_str("\x1b[35m"),
+                ratatui::style::Color::Cyan => result.push_str("\x1b[36m"),
+                ratatui::style::Color::White => result.push_str("\x1b[37m"),
+                ratatui::style::Color::Gray | ratatui::style::Color::DarkGray => {
+                    result.push_str("\x1b[90m")
+                }
+                ratatui::style::Color::LightRed => result.push_str("\x1b[91m"),
+                ratatui::style::Color::LightGreen => result.push_str("\x1b[92m"),
+                ratatui::style::Color::LightYellow => result.push_str("\x1b[93m"),
+                ratatui::style::Color::LightBlue => result.push_str("\x1b[94m"),
+                ratatui::style::Color::LightMagenta => result.push_str("\x1b[95m"),
+                ratatui::style::Color::LightCyan => result.push_str("\x1b[96m"),
+                ratatui::style::Color::Rgb(r, g, b) => {
+                    result.push_str(&format!("\x1b[38;2;{r};{g};{b}m"))
+                }
+                ratatui::style::Color::Indexed(i) => result.push_str(&format!("\x1b[38;5;{i}m")),
+                _ => {}
+            }
+        }
+
+        // Add background color if present
+        if let Some(bg_color) = span.style.bg {
+            match bg_color {
+                ratatui::style::Color::Black => result.push_str("\x1b[40m"),
+                ratatui::style::Color::Red => result.push_str("\x1b[41m"),
+                ratatui::style::Color::Green => result.push_str("\x1b[42m"),
+                ratatui::style::Color::Yellow => result.push_str("\x1b[43m"),
+                ratatui::style::Color::Blue => result.push_str("\x1b[44m"),
+                ratatui::style::Color::Magenta => result.push_str("\x1b[45m"),
+                ratatui::style::Color::Cyan => result.push_str("\x1b[46m"),
+                ratatui::style::Color::White => result.push_str("\x1b[47m"),
+                ratatui::style::Color::Rgb(r, g, b) => {
+                    result.push_str(&format!("\x1b[48;2;{r};{g};{b}m"))
+                }
+                ratatui::style::Color::Indexed(i) => result.push_str(&format!("\x1b[48;5;{i}m")),
+                _ => {}
+            }
+        }
+
+        // Add modifiers
+        if span
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD)
+        {
+            result.push_str("\x1b[1m");
+        }
+        if span
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::ITALIC)
+        {
+            result.push_str("\x1b[3m");
+        }
+        if span
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+        {
+            result.push_str("\x1b[4m");
+        }
+
+        // Add the text content
+        result.push_str(&span.content);
+
+        // Add reset if we added any styling
+        if result != span.content {
+            result.push_str("\x1b[0m");
+        }
+
+        result
+    }
+
+    fn needs_animation_filtering(&self, text: &str) -> bool {
+        // Only use ANSI parser for applications that need filtering of complex sequences:
+        // 1. Screen clearing and cursor positioning (animations)
+        // 2. Lots of escape sequences that might be animations
+        // Note: Simple color codes are passed through directly for efficiency
+        text.contains("\x1b[2J") ||  // Clear screen
+        text.contains("\x1b[H") ||   // Cursor home
+        text.contains("\x1b[?1049h") || // Alternative screen buffer
+        text.contains("\x1b[?1047h") || // Alternative screen buffer
+        (text.matches('\x1b').count() > 10) // Lots of escape sequences (likely animation)
     }
 
     pub async fn kill_running_command(&mut self) {

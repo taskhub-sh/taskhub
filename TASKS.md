@@ -158,8 +158,14 @@
 ## Terminal Usability Enhancment
 
 ### 36. Color support
-- [ ] **Add color support for command output in terminal view**
-  - Implement ANSI color code parsing and rendering in the terminal output view in `src/tui/views/terminal.rs`. Support standard ANSI escape sequences for foreground/background colors, bold, italic, and underline text formatting. Ensure colors are properly displayed when commands like `ls --color=always`, `git status`, or `cargo test` produce colored output. Handle terminals that don't support colors gracefully.
+- [x] **Add color support for command output in terminal view**
+  - Implement ANSI color code parsing and rendering in the terminal output view in `src/tui/views/terminal.rs`. Support standard ANSI escape sequences for foreground/background colors, bold, italic, and underline text formatting. ### 38. Integrate `vtparse`
+- [ ] **Integrate `vtparse` as the vt100 ansi parser**
+  - Modify the application to use vtparse to handle all ansi processing including colors, cursor movements, animations, screen
+    clear etc. The scrolling feature of the output terminal should also work gracefully with animations - i.e. if there are
+    many screen changes and updates, only the final output of the application should remain in the history. This also means
+    that if an application restores the previous output when it exists, then no trace of it should be left in the terminal
+    output scroll buffer.Ensure colors are properly displayed when commands like `ls --color=always`, `git status`, or `cargo test` produce colored output. Handle terminals that don't support colors gracefully.
 
 ### 37. Output streaming
 - [x] **Implement real-time command output streaming**

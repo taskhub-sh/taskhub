@@ -6,6 +6,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 
+pub mod ansi_parser;
 pub mod app;
 pub mod completion;
 pub mod components;

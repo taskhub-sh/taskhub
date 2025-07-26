@@ -1,0 +1,18 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "cargo",
+            "command": "build",
+            "args": [
+                "--bin",
+                "ansi-parser"
+            ],
+            "group": "build",
+            "label": "cargo build ansi-parser",
+            "problemMatcher": [
+                "$rustc"
+            ]
+        }
+    ]
+}

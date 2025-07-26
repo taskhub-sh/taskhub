@@ -1,0 +1,2 @@
+Basic: [31mRed[0m [32mGreen[0m [34mBlue[0m
+24-bit RGB: [38;2;255;128;0mOrange[0m [38;2;128;0;255mPurple[0m [38;2;0;255;128mTeal[0m

@@ -16,6 +16,7 @@ TaskHub is a terminal-based multi-source task management system built in Rust. I
 
 - Rust (2021 edition) and Cargo
 - `pkg-config` and `libssl-dev` (for OpenSSL dependency)
+- `mold` (for faster linking on Linux - optional but recommended)
 
 ### Build from Source
 
@@ -26,13 +27,20 @@ TaskHub is a terminal-based multi-source task management system built in Rust. I
    cd taskhub
    ```
 
-2. Build the project:
+2. Install dependencies (Ubuntu/Debian):
+
+   ```bash
+   sudo apt update
+   sudo apt install pkg-config libssl-dev mold
+   ```
+
+3. Build the project:
 
    ```bash
    cargo build --release
    ```
 
-3. The executable will be located at `target/release/taskhub`.
+4. The executable will be located at `target/release/taskhub`.
 
 ## Usage
 
