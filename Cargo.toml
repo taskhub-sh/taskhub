@@ -32,7 +32,6 @@ dirs = "*"
 chrono = { version = "*", features = ["serde"] }
 arboard = { version = "*", features = ["wayland-data-control"] }
 regex = "*"
-ansi-to-tui = "*"
 portable-pty = "*"
 vtparse = "*"
 color-eyre = "0.6.5"
