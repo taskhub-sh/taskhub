@@ -3,14 +3,13 @@ use crate::db::operations;
 use crate::history::HistoryManager;
 use crate::tui::ansi_parser::AnsiParser;
 use crate::tui::completion::{CompletionEngine, CompletionState};
-use crate::tui::views::terminal::CommandEntry;
-use portable_pty::{CommandBuilder, PtySize};
+use crate::tui::views::terminal::{CommandEntry, process_output_with_carriage_returns};
 use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+// Removed unused imports: std::process::Stdio, tokio::io::{AsyncBufReadExt, BufReader}
+use portable_pty::{CommandBuilder, PtySize};
+use tokio::process::Child;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -81,6 +80,8 @@ pub struct RunningCommand {
     pub pty_child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
     pub stdout_buffer: Vec<String>,
     pub stderr_buffer: Vec<String>,
+    pub current_stdout_line: String, // Buffer for current line being built
+    pub current_stderr_line: String, // Buffer for current stderr line being built
     pub output_changed: bool,
     pub output_receiver: Option<mpsc::UnboundedReceiver<OutputLine>>,
     pub uses_alternate_screen: bool,
@@ -730,22 +731,17 @@ impl App {
         // Reset ANSI parser state before command execution to ensure consistent processing
         self.ansi_parser.reset();
 
-        // Try PTY execution first for better color support
-        let running_cmd = if let Ok(running_cmd) = self.execute_command_with_pty(&command).await {
-            running_cmd
-        } else {
-            // Fallback to regular pipes if PTY fails
-            match self.execute_command_with_pipes(&command).await {
-                Ok(running_cmd) => running_cmd,
-                Err(_) => {
-                    let entry = CommandEntry {
-                        command,
-                        output: "Error: Failed to execute command".to_string(),
-                        success: false,
-                    };
-                    self.add_command_entry(entry).await;
-                    return;
-                }
+        // Use PTY implementation for proper TTY formatting and color support
+        let running_cmd = match self.execute_command_with_pty(&command).await {
+            Ok(running_cmd) => running_cmd,
+            Err(_) => {
+                let entry = CommandEntry {
+                    command,
+                    output: "Error: Failed to execute command".to_string(),
+                    success: false,
+                };
+                self.add_command_entry(entry).await;
+                return;
             }
         };
 
@@ -764,21 +760,20 @@ impl App {
         &mut self,
         command: &str,
     ) -> Result<RunningCommand, Box<dyn std::error::Error + Send + Sync>> {
-        // Create a PTY system
+        // Create a PTY system for proper terminal emulation
         let pty_system = portable_pty::native_pty_system();
 
-        // Get actual terminal size for proper display
-        let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
-
-        // Create a PTY with actual terminal size
-        let pty_pair = pty_system.openpty(PtySize {
-            rows: term_rows,
-            cols: term_cols,
+        // Create a PTY with appropriate size (80x24 is a reasonable default)
+        let pty_size = PtySize {
+            rows: 24,
+            cols: 80,
             pixel_width: 0,
             pixel_height: 0,
-        })?;
+        };
 
-        // Create command builder
+        let pty_pair = pty_system.openpty(pty_size)?;
+
+        // Create command builder for the shell
         let mut cmd = if cfg!(target_os = "windows") {
             CommandBuilder::new("cmd")
         } else {
@@ -796,135 +791,45 @@ impl App {
             cmd.cwd(current_dir);
         }
 
-        // Set environment variables to encourage color output
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("FORCE_COLOR", "1");
-        cmd.env("CLICOLOR_FORCE", "1");
-
-        // Spawn the child process in the PTY
+        // Spawn the command in the PTY
         let pty_child = pty_pair.slave.spawn_command(cmd)?;
 
-        // Get the reader for PTY output
+        // Set up channels for streaming output
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        // Get the master side for reading output
         let mut reader = pty_pair.master.try_clone_reader()?;
 
-        // Create channel for receiving streaming output
-        let (output_sender, output_receiver) = mpsc::unbounded_channel();
+        // Spawn a task to read from the PTY and send output via channel
+        tokio::spawn(async move {
+            use std::io::Read;
+            let mut buffer = [0u8; 4096];
 
-        // Start background task for streaming PTY output
-        tokio::task::spawn_blocking(move || {
-            let mut buffer = [0u8; 8192];
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break, // EOF
                     Ok(n) => {
-                        // Convert bytes to string, handling potential invalid UTF-8
-                        let output = String::from_utf8_lossy(&buffer[..n]);
-
-                        // Split by lines and send each line
-                        for line in output.lines() {
-                            let _ = output_sender.send(OutputLine::Stdout(line.to_string()));
-                        }
-
-                        // Handle partial lines (data without newline at end)
-                        if !output.ends_with('\n') && !output.is_empty() {
-                            if let Some(_last_line) = output.lines().last() {
-                                // This was already sent above, so we don't need to resend
-                            }
+                        let output = String::from_utf8_lossy(&buffer[..n]).to_string();
+                        if tx.send(OutputLine::Stdout(output)).is_err() {
+                            break; // Channel closed
                         }
                     }
-                    Err(_) => break,
+                    Err(_) => break, // Error reading
                 }
             }
         });
 
+        // Return the running command with PTY child
         Ok(RunningCommand {
             command: command.to_string(),
-            child: None,
+            child: None, // We're using PTY instead of regular process
             pty_child: Some(pty_child),
             stdout_buffer: Vec::new(),
             stderr_buffer: Vec::new(),
+            current_stdout_line: String::new(),
+            current_stderr_line: String::new(),
             output_changed: false,
-            output_receiver: Some(output_receiver),
-            uses_alternate_screen: false,
-            live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
-        })
-    }
-
-    async fn execute_command_with_pipes(
-        &mut self,
-        command: &str,
-    ) -> Result<RunningCommand, Box<dyn std::error::Error + Send + Sync>> {
-        let mut cmd = if cfg!(target_os = "windows") {
-            Command::new("cmd")
-        } else {
-            Command::new("sh")
-        };
-
-        if cfg!(target_os = "windows") {
-            cmd.args(["/C", command]);
-        } else {
-            cmd.args(["-c", command]);
-        }
-
-        // Set current working directory to preserve user's location
-        if let Ok(current_dir) = std::env::current_dir() {
-            cmd.current_dir(current_dir);
-        }
-
-        let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-
-        // Take stdout and stderr for streaming
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-
-        // Create channel for receiving streaming output
-        let (output_sender, output_receiver) = mpsc::unbounded_channel();
-
-        // Start background tasks for streaming stdout and stderr
-        if let Some(stdout) = stdout {
-            let sender = output_sender.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout);
-                let mut line = String::new();
-                while let Ok(bytes_read) = reader.read_line(&mut line).await {
-                    if bytes_read == 0 {
-                        break; // EOF
-                    }
-                    let trimmed_line = line.trim_end().to_string();
-                    if !trimmed_line.is_empty() {
-                        let _ = sender.send(OutputLine::Stdout(trimmed_line));
-                    }
-                    line.clear();
-                }
-            });
-        }
-
-        if let Some(stderr) = stderr {
-            let sender = output_sender.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr);
-                let mut line = String::new();
-                while let Ok(bytes_read) = reader.read_line(&mut line).await {
-                    if bytes_read == 0 {
-                        break; // EOF
-                    }
-                    let trimmed_line = line.trim_end().to_string();
-                    if !trimmed_line.is_empty() {
-                        let _ = sender.send(OutputLine::Stderr(trimmed_line));
-                    }
-                    line.clear();
-                }
-            });
-        }
-
-        Ok(RunningCommand {
-            command: command.to_string(),
-            child: Some(child),
-            pty_child: None,
-            stdout_buffer: Vec::new(),
-            stderr_buffer: Vec::new(),
-            output_changed: false,
-            output_receiver: Some(output_receiver),
+            output_receiver: Some(rx),
             uses_alternate_screen: false,
             live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
         })
@@ -949,7 +854,8 @@ impl App {
                     Err(_) => (true, false),
                 }
             } else {
-                (false, true) // Should not happen, but handle gracefully
+                // No child process - command is already completed (from pipes method)
+                (true, true)
             };
 
             if command_finished {
@@ -1016,7 +922,16 @@ impl App {
                             running.uses_alternate_screen = false;
                         }
 
-                        // Store output for real-time display, but handle alternate screen applications specially
+                        // Store output for real-time display, but handle progress bars specially
+                        // If this looks like a progress bar update (contains \r), replace the last line
+                        if line.contains('\r')
+                            || (line.contains('%') && (line.contains('|') || line.contains('[')))
+                        {
+                            // This looks like a progress bar - replace the last line if it exists
+                            if !running.stdout_buffer.is_empty() {
+                                running.stdout_buffer.pop();
+                            }
+                        }
                         running.stdout_buffer.push(line);
 
                         // For alternate screen applications, we'll clean up the buffer when they exit
@@ -1207,7 +1122,7 @@ impl App {
             total_lines += 1;
             // Output lines
             if !entry.output.is_empty() {
-                total_lines += entry.output.lines().count();
+                total_lines += process_output_with_carriage_returns(&entry.output).len();
             }
             // Empty spacing line
             total_lines += 1;
@@ -1503,8 +1418,8 @@ impl App {
             for entry in &self.command_history {
                 lines.push(format!("> {}", entry.command));
                 if !entry.output.is_empty() {
-                    for line in entry.output.lines() {
-                        lines.push(line.to_string());
+                    for line in process_output_with_carriage_returns(&entry.output) {
+                        lines.push(line);
                     }
                 }
                 lines.push(String::new()); // Empty line for spacing
@@ -1624,23 +1539,27 @@ impl App {
         if let Some(ref mut clipboard) = self.clipboard {
             match clipboard.get_text() {
                 Ok(text) => {
-                    // Insert text at current cursor position
-                    let mut chars: Vec<char> = self.current_input.chars().collect();
-                    let cursor_pos = self.cursor_position.min(chars.len());
+                    // Filter clipboard text to remove control characters (except tab)
+                    let filtered_text: String = text
+                        .chars()
+                        .filter(|&ch| !ch.is_control() || ch == '\t')
+                        .collect();
 
-                    // Insert clipboard text character by character
-                    let mut char_count = 0;
-                    for ch in text.chars() {
-                        // Skip newlines and other control characters for single-line input
-                        if ch.is_control() && ch != '\t' {
-                            continue;
-                        }
-                        chars.insert(cursor_pos + char_count, ch);
-                        char_count += 1;
+                    if filtered_text.is_empty() {
+                        return Ok(());
                     }
 
-                    self.current_input = chars.into_iter().collect();
-                    self.cursor_position = cursor_pos + char_count;
+                    // Get current input as chars and find cursor position
+                    let current_chars: Vec<char> = self.current_input.chars().collect();
+                    let cursor_pos = self.cursor_position.min(current_chars.len());
+
+                    // Optimized insertion: split current input at cursor and reconstruct
+                    let before_cursor: String = current_chars[..cursor_pos].iter().collect();
+                    let after_cursor: String = current_chars[cursor_pos..].iter().collect();
+
+                    // Construct new input in one operation
+                    self.current_input = format!("{before_cursor}{filtered_text}{after_cursor}");
+                    self.cursor_position = cursor_pos + filtered_text.chars().count();
 
                     Ok(())
                 }
@@ -1786,7 +1705,7 @@ impl App {
 
             // Output lines
             if !entry.output.is_empty() {
-                all_items_count += entry.output.lines().count();
+                all_items_count += process_output_with_carriage_returns(&entry.output).len();
             }
 
             // Empty line for spacing
@@ -2058,9 +1977,9 @@ impl App {
 
             // Search in output lines
             if !entry.output.is_empty() {
-                for line in entry.output.lines() {
+                for line in process_output_with_carriage_returns(&entry.output) {
                     Self::search_in_text_static(
-                        line,
+                        &line,
                         line_index,
                         &search_query,
                         &search_mode,
