@@ -4,12 +4,10 @@ use crate::history::HistoryManager;
 use crate::tui::ansi_parser::AnsiParser;
 use crate::tui::completion::{CompletionEngine, CompletionState};
 use crate::tui::views::terminal::{CommandEntry, process_output_with_carriage_returns};
-use portable_pty::{CommandBuilder, PtySize};
 use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
+// Removed unused imports: std::process::Stdio, tokio::io::{AsyncBufReadExt, BufReader}
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -96,46 +94,6 @@ pub enum OutputLine {
 }
 
 impl App {
-    /// Process streaming output handling carriage returns properly for progress bars
-    fn process_streaming_output(
-        data: &str,
-        sender: &mpsc::UnboundedSender<OutputLine>,
-        is_stdout: bool,
-    ) {
-        // Note: This is a simplified version. For full streaming support,
-        // we'd need to maintain state between calls, but this handles
-        // the basic case where a complete update comes in one chunk
-        for ch in data.chars() {
-            match ch {
-                '\n' => {
-                    // Send the current line and start a new one
-                    // For now, we'll send each chunk as received
-                    // A more complete implementation would accumulate lines
-                }
-                '\r' => {
-                    // Carriage return - this would reset the current line
-                    // For now, we'll treat this as a line separator for progress bars
-                }
-                _ => {
-                    // Regular character
-                }
-            }
-        }
-
-        // For now, let's use a simpler approach and just send the data as lines
-        // but split on both \n and \r for progress bar support
-        let processed_lines = process_output_with_carriage_returns(data);
-        for line in processed_lines {
-            if !line.is_empty() {
-                let output_line = if is_stdout {
-                    OutputLine::Stdout(line)
-                } else {
-                    OutputLine::Stderr(line)
-                };
-                let _ = sender.send(output_line);
-            }
-        }
-    }
     pub fn new(db_pool: SqlitePool) -> Self {
         let available_commands = vec![
             "/quit".to_string(),
@@ -772,22 +730,18 @@ impl App {
         // Reset ANSI parser state before command execution to ensure consistent processing
         self.ansi_parser.reset();
 
-        // Try PTY execution first for better color support
-        let running_cmd = if let Ok(running_cmd) = self.execute_command_with_pty(&command).await {
-            running_cmd
-        } else {
-            // Fallback to regular pipes if PTY fails
-            match self.execute_command_with_pipes(&command).await {
-                Ok(running_cmd) => running_cmd,
-                Err(_) => {
-                    let entry = CommandEntry {
-                        command,
-                        output: "Error: Failed to execute command".to_string(),
-                        success: false,
-                    };
-                    self.add_command_entry(entry).await;
-                    return;
-                }
+        // Use pipes implementation for reliable output capture
+        // TODO: Fix PTY implementation in a future update for better color support
+        let running_cmd = match self.execute_command_with_pipes(&command).await {
+            Ok(running_cmd) => running_cmd,
+            Err(_) => {
+                let entry = CommandEntry {
+                    command,
+                    output: "Error: Failed to execute command".to_string(),
+                    success: false,
+                };
+                self.add_command_entry(entry).await;
+                return;
             }
         };
 
@@ -800,96 +754,6 @@ impl App {
             success: true,
         };
         self.add_command_entry(entry).await;
-    }
-
-    async fn execute_command_with_pty(
-        &mut self,
-        command: &str,
-    ) -> Result<RunningCommand, Box<dyn std::error::Error + Send + Sync>> {
-        // Create a PTY system
-        let pty_system = portable_pty::native_pty_system();
-
-        // Get actual terminal size for proper display
-        let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
-
-        // Create a PTY with actual terminal size
-        let pty_pair = pty_system.openpty(PtySize {
-            rows: term_rows,
-            cols: term_cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
-
-        // Create command builder
-        let mut cmd = if cfg!(target_os = "windows") {
-            CommandBuilder::new("cmd")
-        } else {
-            CommandBuilder::new("sh")
-        };
-
-        if cfg!(target_os = "windows") {
-            cmd.args(["/C", command]);
-        } else {
-            cmd.args(["-c", command]);
-        }
-
-        // Set current working directory to preserve user's location
-        if let Ok(current_dir) = std::env::current_dir() {
-            cmd.cwd(current_dir);
-        }
-
-        // Set environment variables to encourage color output
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("FORCE_COLOR", "1");
-        cmd.env("CLICOLOR_FORCE", "1");
-
-        // Spawn the child process in the PTY
-        let pty_child = pty_pair.slave.spawn_command(cmd)?;
-
-        // Get the reader for PTY output
-        let mut reader = pty_pair.master.try_clone_reader()?;
-
-        // Create channel for receiving streaming output
-        let (output_sender, output_receiver) = mpsc::unbounded_channel();
-
-        // Start background task for streaming PTY output
-        tokio::task::spawn_blocking(move || {
-            let mut buffer = [0u8; 8192];
-            loop {
-                match reader.read(&mut buffer) {
-                    Ok(0) => break, // EOF
-                    Ok(n) => {
-                        // Convert bytes to string, handling potential invalid UTF-8
-                        let output = String::from_utf8_lossy(&buffer[..n]);
-
-                        // Process output handling carriage returns properly
-                        Self::process_streaming_output(&output, &output_sender, true);
-
-                        // Handle partial lines (data without newline at end)
-                        if !output.ends_with('\n') && !output.is_empty() {
-                            if let Some(_last_line) = output.lines().last() {
-                                // This was already sent above, so we don't need to resend
-                            }
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-
-        Ok(RunningCommand {
-            command: command.to_string(),
-            child: None,
-            pty_child: Some(pty_child),
-            stdout_buffer: Vec::new(),
-            stderr_buffer: Vec::new(),
-            current_stdout_line: String::new(),
-            current_stderr_line: String::new(),
-            output_changed: false,
-            output_receiver: Some(output_receiver),
-            uses_alternate_screen: false,
-            live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
-        })
     }
 
     async fn execute_command_with_pipes(
@@ -913,62 +777,42 @@ impl App {
             cmd.current_dir(current_dir);
         }
 
-        let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+        // Capture output directly using output() method instead of streaming
+        let output = cmd.output().await?;
 
-        // Take stdout and stderr for streaming
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
+        // Convert the output to strings
+        let stdout_text = String::from_utf8_lossy(&output.stdout);
+        let stderr_text = String::from_utf8_lossy(&output.stderr);
 
-        // Create channel for receiving streaming output
-        let (output_sender, output_receiver) = mpsc::unbounded_channel();
+        // Process the output using the same line processing logic
+        let mut stdout_buffer = Vec::new();
+        let mut stderr_buffer = Vec::new();
 
-        // Start background tasks for streaming stdout and stderr
-        if let Some(stdout) = stdout {
-            let sender = output_sender.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout);
-                let mut line = String::new();
-                while let Ok(bytes_read) = reader.read_line(&mut line).await {
-                    if bytes_read == 0 {
-                        break; // EOF
-                    }
-                    let trimmed_line = line.trim_end().to_string();
-                    if !trimmed_line.is_empty() {
-                        let _ = sender.send(OutputLine::Stdout(trimmed_line));
-                    }
-                    line.clear();
-                }
-            });
+        // Process stdout
+        if !stdout_text.is_empty() {
+            let processed_lines =
+                crate::tui::views::terminal::process_output_with_carriage_returns(&stdout_text);
+            stdout_buffer.extend(processed_lines);
         }
 
-        if let Some(stderr) = stderr {
-            let sender = output_sender.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr);
-                let mut line = String::new();
-                while let Ok(bytes_read) = reader.read_line(&mut line).await {
-                    if bytes_read == 0 {
-                        break; // EOF
-                    }
-                    let trimmed_line = line.trim_end().to_string();
-                    if !trimmed_line.is_empty() {
-                        let _ = sender.send(OutputLine::Stderr(trimmed_line));
-                    }
-                    line.clear();
-                }
-            });
+        // Process stderr
+        if !stderr_text.is_empty() {
+            let processed_lines =
+                crate::tui::views::terminal::process_output_with_carriage_returns(&stderr_text);
+            stderr_buffer.extend(processed_lines);
         }
 
+        // Create a finished command (no child process since it's already completed)
         Ok(RunningCommand {
             command: command.to_string(),
-            child: Some(child),
+            child: None, // Command already completed
             pty_child: None,
-            stdout_buffer: Vec::new(),
-            stderr_buffer: Vec::new(),
+            stdout_buffer,
+            stderr_buffer,
             current_stdout_line: String::new(),
             current_stderr_line: String::new(),
-            output_changed: false,
-            output_receiver: Some(output_receiver),
+            output_changed: true,  // Mark as changed so it gets processed
+            output_receiver: None, // No need for streaming since command is done
             uses_alternate_screen: false,
             live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
         })
@@ -993,7 +837,8 @@ impl App {
                     Err(_) => (true, false),
                 }
             } else {
-                (false, true) // Should not happen, but handle gracefully
+                // No child process - command is already completed (from pipes method)
+                (true, true)
             };
 
             if command_finished {
