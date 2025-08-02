@@ -57,24 +57,38 @@ fn expand_tabs(text: &str, tab_width: usize) -> String {
 
 /// Process output text to handle carriage returns properly for progress bars
 /// Carriage returns (\r) should overwrite the current line, not create new lines
+/// However, \r\n sequences should be treated as normal line endings
 pub fn process_output_with_carriage_returns(output: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current_line = String::new();
+    let chars: Vec<char> = output.chars().collect();
+    let mut i = 0;
 
-    for ch in output.chars() {
-        match ch {
+    while i < chars.len() {
+        match chars[i] {
+            '\r' => {
+                // Check if this is \r\n (normal line ending) or standalone \r (overwrite)
+                if i + 1 < chars.len() && chars[i + 1] == '\n' {
+                    // \r\n sequence - treat as normal line ending
+                    lines.push(current_line.clone());
+                    current_line.clear();
+                    i += 2; // Skip both \r and \n
+                } else {
+                    // Standalone \r - overwrite mode for progress bars
+                    current_line.clear();
+                    i += 1;
+                }
+            }
             '\n' => {
-                // Newline: commit current line and start a new one
+                // Standalone newline: commit current line and start a new one
                 lines.push(current_line.clone());
                 current_line.clear();
+                i += 1;
             }
-            '\r' => {
-                // Carriage return: reset current line (overwrite mode)
-                current_line.clear();
-            }
-            _ => {
+            ch => {
                 // Regular character: add to current line
                 current_line.push(ch);
+                i += 1;
             }
         }
     }
