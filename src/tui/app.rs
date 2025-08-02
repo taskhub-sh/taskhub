@@ -8,7 +8,8 @@ use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 // Removed unused imports: std::process::Stdio, tokio::io::{AsyncBufReadExt, BufReader}
-use tokio::process::{Child, Command};
+use portable_pty::{CommandBuilder, PtySize};
+use tokio::process::Child;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -730,9 +731,8 @@ impl App {
         // Reset ANSI parser state before command execution to ensure consistent processing
         self.ansi_parser.reset();
 
-        // Use pipes implementation for reliable output capture
-        // TODO: Fix PTY implementation in a future update for better color support
-        let running_cmd = match self.execute_command_with_pipes(&command).await {
+        // Use PTY implementation for proper TTY formatting and color support
+        let running_cmd = match self.execute_command_with_pty(&command).await {
             Ok(running_cmd) => running_cmd,
             Err(_) => {
                 let entry = CommandEntry {
@@ -756,14 +756,28 @@ impl App {
         self.add_command_entry(entry).await;
     }
 
-    async fn execute_command_with_pipes(
+    async fn execute_command_with_pty(
         &mut self,
         command: &str,
     ) -> Result<RunningCommand, Box<dyn std::error::Error + Send + Sync>> {
+        // Create a PTY system for proper terminal emulation
+        let pty_system = portable_pty::native_pty_system();
+
+        // Create a PTY with appropriate size (80x24 is a reasonable default)
+        let pty_size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        let pty_pair = pty_system.openpty(pty_size)?;
+
+        // Create command builder for the shell
         let mut cmd = if cfg!(target_os = "windows") {
-            Command::new("cmd")
+            CommandBuilder::new("cmd")
         } else {
-            Command::new("sh")
+            CommandBuilder::new("sh")
         };
 
         if cfg!(target_os = "windows") {
@@ -774,45 +788,48 @@ impl App {
 
         // Set current working directory to preserve user's location
         if let Ok(current_dir) = std::env::current_dir() {
-            cmd.current_dir(current_dir);
+            cmd.cwd(current_dir);
         }
 
-        // Capture output directly using output() method instead of streaming
-        let output = cmd.output().await?;
+        // Spawn the command in the PTY
+        let pty_child = pty_pair.slave.spawn_command(cmd)?;
 
-        // Convert the output to strings
-        let stdout_text = String::from_utf8_lossy(&output.stdout);
-        let stderr_text = String::from_utf8_lossy(&output.stderr);
+        // Set up channels for streaming output
+        let (tx, rx) = mpsc::unbounded_channel();
 
-        // Process the output using the same line processing logic
-        let mut stdout_buffer = Vec::new();
-        let mut stderr_buffer = Vec::new();
+        // Get the master side for reading output
+        let mut reader = pty_pair.master.try_clone_reader()?;
 
-        // Process stdout
-        if !stdout_text.is_empty() {
-            let processed_lines =
-                crate::tui::views::terminal::process_output_with_carriage_returns(&stdout_text);
-            stdout_buffer.extend(processed_lines);
-        }
+        // Spawn a task to read from the PTY and send output via channel
+        tokio::spawn(async move {
+            use std::io::Read;
+            let mut buffer = [0u8; 4096];
 
-        // Process stderr
-        if !stderr_text.is_empty() {
-            let processed_lines =
-                crate::tui::views::terminal::process_output_with_carriage_returns(&stderr_text);
-            stderr_buffer.extend(processed_lines);
-        }
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        let output = String::from_utf8_lossy(&buffer[..n]).to_string();
+                        if tx.send(OutputLine::Stdout(output)).is_err() {
+                            break; // Channel closed
+                        }
+                    }
+                    Err(_) => break, // Error reading
+                }
+            }
+        });
 
-        // Create a finished command (no child process since it's already completed)
+        // Return the running command with PTY child
         Ok(RunningCommand {
             command: command.to_string(),
-            child: None, // Command already completed
-            pty_child: None,
-            stdout_buffer,
-            stderr_buffer,
+            child: None, // We're using PTY instead of regular process
+            pty_child: Some(pty_child),
+            stdout_buffer: Vec::new(),
+            stderr_buffer: Vec::new(),
             current_stdout_line: String::new(),
             current_stderr_line: String::new(),
-            output_changed: true,  // Mark as changed so it gets processed
-            output_receiver: None, // No need for streaming since command is done
+            output_changed: false,
+            output_receiver: Some(rx),
             uses_alternate_screen: false,
             live_ansi_parser: Some(crate::tui::ansi_parser::AnsiParser::new_with_terminal_size()),
         })
